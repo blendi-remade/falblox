@@ -1,6 +1,6 @@
 # falblox
 
-Generate 3D models from text or images directly inside Roblox Studio. Powered by [fal.ai](https://fal.ai) running [Tripo P1](https://fal.ai/models/tripo3d/p1).
+Generate 3D models from text or images directly inside Roblox Studio. Powered by [fal.ai](https://fal.ai) running [Tripo P1](https://fal.ai/models/tripo3d/p1/image-to-3d).
 
 <!-- Drop your fire dragon screenshot at docs/demo.png and commit it. -->
 ![falblox demo](docs/demo.png)
@@ -67,7 +67,7 @@ For Image to 3D, the file is read with `StudioService:PromptImportFile`, uploade
 
 ## Costs
 
-You pay fal directly for each generation. See [Tripo P1 pricing](https://fal.ai/models/tripo3d/p1) and add credits at [fal.ai/dashboard/billing](https://fal.ai/dashboard/billing).
+You pay fal directly for each generation. See [Tripo P1 pricing](https://fal.ai/models/tripo3d/p1/image-to-3d) and add credits at [fal.ai/dashboard/billing](https://fal.ai/dashboard/billing).
 
 ## Limitations
 
