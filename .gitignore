@@ -16,3 +16,7 @@ Thumbs.db
 *.pem
 secrets.json
 credentials.json
+
+# build tooling & local scratch (not committed)
+vendor/
+build/
