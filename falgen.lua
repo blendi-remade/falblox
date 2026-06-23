@@ -1265,8 +1265,13 @@ local FAL_BASE = "https://queue.fal.run"
 local FAL_STORAGE_INITIATE = "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3"
 local TEXT_MODEL = "tripo3d/p1/text-to-3d"
 local IMAGE_MODEL = "tripo3d/p1/image-to-3d"
-local IMAGE_GEN_MODEL = "fal-ai/z-image/turbo" -- text → image (PNG)
-local IMAGE_EDIT_MODEL = "fal-ai/z-image/turbo/image-to-image" -- edit an image (PNG)
+-- Image gen/edit: two tiers (Fast = z-image turbo, Quality = nano-banana 2)
+local IMAGE_GEN_MODEL_FAST = "fal-ai/z-image/turbo"
+local IMAGE_GEN_MODEL_QUALITY = "fal-ai/nano-banana-2"
+local IMAGE_EDIT_MODEL_FAST = "fal-ai/z-image/turbo/image-to-image"
+local IMAGE_EDIT_MODEL_QUALITY = "fal-ai/nano-banana-2/edit"
+local PATINA_MATERIAL_MODEL = "fal-ai/patina/material" -- text → tiling PBR material (PNG)
+local PATINA_FROM_IMAGE_MODEL = "fal-ai/patina" -- image → PBR maps (PNG)
 local DEFAULT_FACE_LIMIT = 9000
 local POLL_INTERVAL = 2
 local MAX_IMAGE_BYTES = 4 * 1024 * 1024
@@ -1457,464 +1462,526 @@ end
 -- UI
 -- ============================================================
 local TOOLBAR = plugin:CreateToolbar("fal")
-local BUTTON = TOOLBAR:CreateButton("falgen", "Generate 3D models with fal.ai", "")
+local BUTTON = TOOLBAR:CreateButton("falgen", "fal genmedia for Roblox Studio", "")
 BUTTON.ClickableWhenViewportHidden = true
 
 local widgetInfo = DockWidgetPluginGuiInfo.new(
-	Enum.InitialDockState.Float, false, false, 400, 620, 340, 480
+	Enum.InitialDockState.Float, false, false, 440, 680, 360, 520
 )
 local widget = plugin:CreateDockWidgetPluginGui("falgen.widget", widgetInfo)
-widget.Title = "fal · 3D Generation"
+widget.Title = "fal · genmedia"
 widget.Name = "falgen"
 
-BUTTON.Click:Connect(function()
-	widget.Enabled = not widget.Enabled
-end)
-widget:GetPropertyChangedSignal("Enabled"):Connect(function()
-	BUTTON:SetActive(widget.Enabled)
-end)
+BUTTON.Click:Connect(function() widget.Enabled = not widget.Enabled end)
+widget:GetPropertyChangedSignal("Enabled"):Connect(function() BUTTON:SetActive(widget.Enabled) end)
 
-local scroll = Instance.new("ScrollingFrame")
-scroll.Size = UDim2.new(1, 0, 1, 0)
-scroll.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-scroll.BorderSizePixel = 0
-scroll.ScrollBarThickness = 6
-scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-scroll.Parent = widget
+-- ---- palette ----
+local COL_BG = Color3.fromRGB(40, 40, 40)
+local COL_TABBAR = Color3.fromRGB(30, 30, 30)
+local COL_ON = Color3.fromRGB(70, 100, 200)
+local COL_OFF = Color3.fromRGB(52, 52, 52)
+local COL_ACCENT = Color3.fromRGB(120, 80, 190)
 
-local listLayout = Instance.new("UIListLayout")
-listLayout.Padding = UDim.new(0, 8)
-listLayout.SortOrder = Enum.SortOrder.LayoutOrder
-listLayout.Parent = scroll
+-- ---- root layout: tab bar (top) + content (middle) + status (bottom) ----
+local TAB_H, STATUS_H = 34, 110
 
-local pad = Instance.new("UIPadding")
-pad.PaddingTop = UDim.new(0, 12)
-pad.PaddingBottom = UDim.new(0, 12)
-pad.PaddingLeft = UDim.new(0, 12)
-pad.PaddingRight = UDim.new(0, 12)
-pad.Parent = scroll
-
-local order = 0
-local function nextOrder()
-	order = order + 1
-	return order
+local tabBar = Instance.new("Frame")
+tabBar.Size = UDim2.new(1, 0, 0, TAB_H)
+tabBar.BackgroundColor3 = COL_TABBAR
+tabBar.BorderSizePixel = 0
+tabBar.Parent = widget
+do
+	local l = Instance.new("UIListLayout")
+	l.FillDirection = Enum.FillDirection.Horizontal
+	l.SortOrder = Enum.SortOrder.LayoutOrder
+	l.Parent = tabBar
 end
 
-local function header(text)
-	local lbl = Instance.new("TextLabel")
-	lbl.Size = UDim2.new(1, 0, 0, 22)
-	lbl.BackgroundTransparency = 1
-	lbl.TextColor3 = Color3.fromRGB(240, 240, 240)
-	lbl.Font = Enum.Font.SourceSansBold
-	lbl.TextSize = 16
-	lbl.TextXAlignment = Enum.TextXAlignment.Left
-	lbl.Text = text
-	lbl.LayoutOrder = nextOrder()
-	lbl.Parent = scroll
-	return lbl
+local content = Instance.new("Frame")
+content.Position = UDim2.new(0, 0, 0, TAB_H)
+content.Size = UDim2.new(1, 0, 1, -(TAB_H + STATUS_H))
+content.BackgroundColor3 = COL_BG
+content.BorderSizePixel = 0
+content.Parent = widget
+
+local statusBar = Instance.new("Frame")
+statusBar.Position = UDim2.new(0, 0, 1, -STATUS_H)
+statusBar.Size = UDim2.new(1, 0, 0, STATUS_H)
+statusBar.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+statusBar.BorderSizePixel = 0
+statusBar.Parent = widget
+
+local statusBox = Instance.new("TextLabel")
+statusBox.Size = UDim2.new(1, 0, 1, 0)
+statusBox.BackgroundTransparency = 1
+statusBox.TextColor3 = Color3.fromRGB(200, 200, 200)
+statusBox.Font = Enum.Font.Code
+statusBox.TextSize = 12
+statusBox.TextXAlignment = Enum.TextXAlignment.Left
+statusBox.TextYAlignment = Enum.TextYAlignment.Bottom
+statusBox.TextWrapped = true
+statusBox.RichText = false
+statusBox.Text = "Idle."
+statusBox.Parent = statusBar
+do
+	local p = Instance.new("UIPadding")
+	p.PaddingTop = UDim.new(0, 6); p.PaddingBottom = UDim.new(0, 6)
+	p.PaddingLeft = UDim.new(0, 10); p.PaddingRight = UDim.new(0, 10)
+	p.Parent = statusBox
 end
 
-local function muted(text, height)
-	local lbl = Instance.new("TextLabel")
-	lbl.Size = UDim2.new(1, 0, 0, height or 18)
-	lbl.BackgroundTransparency = 1
-	lbl.TextColor3 = Color3.fromRGB(160, 160, 160)
-	lbl.Font = Enum.Font.SourceSans
-	lbl.TextSize = 13
-	lbl.TextXAlignment = Enum.TextXAlignment.Left
-	lbl.TextYAlignment = Enum.TextYAlignment.Top
-	lbl.TextWrapped = true
-	lbl.Text = text
-	lbl.LayoutOrder = nextOrder()
-	lbl.Parent = scroll
-	return lbl
+local function setStatus(text) statusBox.Text = text; print("[falgen] " .. text) end
+local function appendStatus(text) statusBox.Text = statusBox.Text .. "\n" .. text; print("[falgen] " .. text) end
+
+-- ---- tabs ----
+local TAB_NAMES = { "Settings", "Image", "3D", "Material", "Video" }
+local tabFrames, tabButtons = {}, {}
+local activeBuildParent = nil
+
+local function showTab(name)
+	for n, f in pairs(tabFrames) do f.Visible = (n == name) end
+	for n, b in pairs(tabButtons) do b.BackgroundColor3 = (n == name) and COL_ON or COL_OFF end
 end
 
-local function divider()
-	local f = Instance.new("Frame")
-	f.Size = UDim2.new(1, 0, 0, 1)
-	f.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+local function makeTab(name, n)
+	local b = Instance.new("TextButton")
+	b.Size = UDim2.new(1 / #TAB_NAMES, 0, 1, 0)
+	b.BackgroundColor3 = COL_OFF
+	b.BorderSizePixel = 0
+	b.TextColor3 = Color3.fromRGB(235, 235, 235)
+	b.Font = Enum.Font.SourceSansSemibold
+	b.TextSize = 14
+	b.Text = name
+	b.AutoButtonColor = true
+	b.LayoutOrder = n
+	b.Parent = tabBar
+	b.MouseButton1Click:Connect(function() showTab(name) end)
+	tabButtons[name] = b
+
+	local f = Instance.new("ScrollingFrame")
+	f.Size = UDim2.new(1, 0, 1, 0)
+	f.BackgroundTransparency = 1
 	f.BorderSizePixel = 0
-	f.LayoutOrder = nextOrder()
-	f.Parent = scroll
+	f.ScrollBarThickness = 6
+	f.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	f.CanvasSize = UDim2.new(0, 0, 0, 0)
+	f.Visible = false
+	f.Parent = content
+	local l = Instance.new("UIListLayout"); l.Padding = UDim.new(0, 8); l.SortOrder = Enum.SortOrder.LayoutOrder; l.Parent = f
+	local p = Instance.new("UIPadding")
+	p.PaddingTop = UDim.new(0, 12); p.PaddingBottom = UDim.new(0, 12); p.PaddingLeft = UDim.new(0, 12); p.PaddingRight = UDim.new(0, 12); p.Parent = f
+	tabFrames[name] = f
 	return f
 end
 
+for i, n in ipairs(TAB_NAMES) do makeTab(n, i) end
+
+-- ---- build helpers (parent into whichever tab is being built) ----
+local order = 0
+local function nextOrder() order = order + 1; return order end
+
+local function header(text)
+	local lbl = Instance.new("TextLabel")
+	lbl.Size = UDim2.new(1, 0, 0, 22); lbl.BackgroundTransparency = 1
+	lbl.TextColor3 = Color3.fromRGB(240, 240, 240); lbl.Font = Enum.Font.SourceSansBold
+	lbl.TextSize = 16; lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.Text = text; lbl.LayoutOrder = nextOrder(); lbl.Parent = activeBuildParent
+	return lbl
+end
+local function muted(text, height)
+	local lbl = Instance.new("TextLabel")
+	lbl.Size = UDim2.new(1, 0, 0, height or 30); lbl.BackgroundTransparency = 1
+	lbl.TextColor3 = Color3.fromRGB(160, 160, 160); lbl.Font = Enum.Font.SourceSans
+	lbl.TextSize = 13; lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.TextYAlignment = Enum.TextYAlignment.Top; lbl.TextWrapped = true
+	lbl.Text = text; lbl.LayoutOrder = nextOrder(); lbl.Parent = activeBuildParent
+	return lbl
+end
+local function divider()
+	local f = Instance.new("Frame")
+	f.Size = UDim2.new(1, 0, 0, 1); f.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+	f.BorderSizePixel = 0; f.LayoutOrder = nextOrder(); f.Parent = activeBuildParent
+	return f
+end
 local function textBox(placeholder, height, multi)
 	local box = Instance.new("TextBox")
-	box.Size = UDim2.new(1, 0, 0, height or 28)
-	box.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
-	box.TextColor3 = Color3.fromRGB(240, 240, 240)
-	box.Text = ""
-	box.PlaceholderText = placeholder or ""
-	box.PlaceholderColor3 = Color3.fromRGB(110, 110, 110)
-	box.Font = Enum.Font.SourceSans
-	box.TextSize = 14
-	box.ClearTextOnFocus = false
+	box.Size = UDim2.new(1, 0, 0, height or 28); box.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+	box.TextColor3 = Color3.fromRGB(240, 240, 240); box.Text = ""
+	box.PlaceholderText = placeholder or ""; box.PlaceholderColor3 = Color3.fromRGB(110, 110, 110)
+	box.Font = Enum.Font.SourceSans; box.TextSize = 14; box.ClearTextOnFocus = false
 	box.TextXAlignment = Enum.TextXAlignment.Left
 	box.TextYAlignment = multi and Enum.TextYAlignment.Top or Enum.TextYAlignment.Center
-	box.MultiLine = multi == true
-	box.TextWrapped = multi == true
-	box.LayoutOrder = nextOrder()
-	local p = Instance.new("UIPadding")
-	p.PaddingLeft = UDim.new(0, 8)
-	p.PaddingRight = UDim.new(0, 8)
-	p.PaddingTop = UDim.new(0, 4)
-	p.PaddingBottom = UDim.new(0, 4)
-	p.Parent = box
-	local stroke = Instance.new("UIStroke")
-	stroke.Color = Color3.fromRGB(60, 60, 60)
-	stroke.Parent = box
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 4)
-	corner.Parent = box
-	box.Parent = scroll
+	box.MultiLine = multi == true; box.TextWrapped = multi == true; box.LayoutOrder = nextOrder()
+	local p = Instance.new("UIPadding"); p.PaddingLeft = UDim.new(0,8); p.PaddingRight = UDim.new(0,8); p.PaddingTop = UDim.new(0,4); p.PaddingBottom = UDim.new(0,4); p.Parent = box
+	local stroke = Instance.new("UIStroke"); stroke.Color = Color3.fromRGB(60,60,60); stroke.Parent = box
+	local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(0,4); corner.Parent = box
+	box.Parent = activeBuildParent
 	return box
 end
-
 local function button(text, color)
 	local btn = Instance.new("TextButton")
-	btn.Size = UDim2.new(1, 0, 0, 32)
-	btn.BackgroundColor3 = color or Color3.fromRGB(70, 100, 200)
-	btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-	btn.Font = Enum.Font.SourceSansSemibold
-	btn.TextSize = 14
-	btn.Text = text
-	btn.AutoButtonColor = true
-	btn.LayoutOrder = nextOrder()
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 4)
-	corner.Parent = btn
-	btn.Parent = scroll
+	btn.Size = UDim2.new(1, 0, 0, 32); btn.BackgroundColor3 = color or COL_ON
+	btn.TextColor3 = Color3.fromRGB(255,255,255); btn.Font = Enum.Font.SourceSansSemibold
+	btn.TextSize = 14; btn.Text = text; btn.AutoButtonColor = true; btn.LayoutOrder = nextOrder()
+	local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(0,4); corner.Parent = btn
+	btn.Parent = activeBuildParent
 	return btn
+end
+local function imagePreview(height)
+	local img = Instance.new("ImageLabel")
+	img.Size = UDim2.new(1, 0, 0, height or 180); img.BackgroundColor3 = Color3.fromRGB(24,24,24)
+	img.BorderSizePixel = 0; img.ScaleType = Enum.ScaleType.Fit; img.LayoutOrder = nextOrder()
+	local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0,4); c.Parent = img
+	img.Parent = activeBuildParent
+	return img
 end
 
 local KEY_MASK = "••••••••••••••••"
-
 local function wireMaskedKey(box, getter)
 	box.Text = getter() ~= "" and KEY_MASK or ""
-	box.Focused:Connect(function()
-		if box.Text == KEY_MASK then
-			box.Text = ""
-		end
-	end)
-	box.FocusLost:Connect(function()
-		if box.Text == "" and getter() ~= "" then
-			box.Text = KEY_MASK
-		end
-	end)
+	box.Focused:Connect(function() if box.Text == KEY_MASK then box.Text = "" end end)
+	box.FocusLost:Connect(function() if box.Text == "" and getter() ~= "" then box.Text = KEY_MASK end end)
 end
 
--- ====== Settings: fal ======
+-- ============================================================
+-- Settings tab
+-- ============================================================
+activeBuildParent = tabFrames.Settings
 header("fal API key")
 muted("Stored locally via plugin:SetSetting (plaintext on disk). BYO key only.")
 local keyBox = textBox("Paste your fal API key…", 28, false)
 wireMaskedKey(keyBox, getKey)
 local saveKeyBtn = button("Save fal key", Color3.fromRGB(60, 130, 90))
-
 divider()
+header("Image quality")
+muted("Fast = z-image turbo (quick). Quality = nano-banana 2 (higher fidelity). Applies to every image generate/edit step.")
+local qualityMode = "fast"
+local fastBtn = button("⚡ Fast")
+local qualityBtn = button("✦ Quality")
+local function refreshQualityButtons()
+	fastBtn.BackgroundColor3 = qualityMode == "fast" and COL_ON or COL_OFF
+	qualityBtn.BackgroundColor3 = qualityMode == "quality" and COL_ACCENT or COL_OFF
+end
 
--- ====== Text-to-3D ======
+-- ============================================================
+-- Image tab (shared workspace → "current image")
+-- ============================================================
+activeBuildParent = tabFrames.Image
+header("Image")
+muted("Generate or edit an image, or load one from disk. The current image feeds both the 3D and Material tabs.")
+local imgGenPromptBox = textBox("Generate — e.g. a fire-breathing dragon, concept art", 48, true)
+local genImgBtn = button("Generate image", COL_ACCENT)
+local imgEditPromptBox = textBox("Edit — e.g. make it icy blue, add glowing eyes", 48, true)
+local editImgBtn = button("Edit current image", COL_ACCENT)
+local resetImgBtn = button("Reset to original", Color3.fromRGB(80, 80, 90))
+local pickBtn = button("Load image from disk…", Color3.fromRGB(80, 80, 90))
+local pickedLabel = muted("(no image yet)", 18)
+local previewImage = imagePreview(200)
+
+-- ============================================================
+-- 3D tab
+-- ============================================================
+activeBuildParent = tabFrames["3D"]
 header("Text → 3D")
 local promptBox = textBox("e.g. a wooden treasure chest with iron bands", 64, true)
 local genTextBtn = button("Generate from text")
-
 divider()
-
--- ====== Image → 3D (disk OR fal-generated, with edit loop) ======
 header("Image → 3D")
-muted("Pick an image from disk, or generate one with fal and edit it as many times as you like — then turn it into 3D.")
-
--- Source A: disk
-local pickedLabel = muted("(no image selected)", 18)
-local pickBtn = button("Pick image from disk…", Color3.fromRGB(80, 80, 90))
-
--- Source B: generate with fal (z-image turbo)
-local imgGenPromptBox = textBox("Generate an image — e.g. a fire-breathing dragon, concept art", 48, true)
-local genImgBtn = button("Generate image (fal)", Color3.fromRGB(120, 80, 190))
-
--- Live preview of the current image
-local previewImage = Instance.new("ImageLabel")
-previewImage.Size = UDim2.new(1, 0, 0, 200)
-previewImage.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
-previewImage.BorderSizePixel = 0
-previewImage.ScaleType = Enum.ScaleType.Fit
-previewImage.LayoutOrder = nextOrder()
-do
-	local c = Instance.new("UICorner")
-	c.CornerRadius = UDim.new(0, 4)
-	c.Parent = previewImage
-end
-previewImage.Parent = scroll
-
--- Edit the current image (image → image), repeatable
-local imgEditPromptBox = textBox("Edit instruction — e.g. make it icy blue, add glowing eyes", 48, true)
-local editImgBtn = button("Edit image", Color3.fromRGB(120, 80, 190))
-local resetImgBtn = button("Reset to original", Color3.fromRGB(80, 80, 90))
-
--- Turn the current image into 3D
-local genImageBtn = button("Generate 3D from this image")
-
-divider()
-
--- ====== Status ======
-header("Status")
-local statusBox = Instance.new("TextLabel")
-statusBox.Size = UDim2.new(1, 0, 0, 140)
-statusBox.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
-statusBox.TextColor3 = Color3.fromRGB(200, 200, 200)
-statusBox.Font = Enum.Font.Code
-statusBox.TextSize = 12
-statusBox.TextXAlignment = Enum.TextXAlignment.Left
-statusBox.TextYAlignment = Enum.TextYAlignment.Top
-statusBox.TextWrapped = true
-statusBox.Text = "Idle."
-statusBox.LayoutOrder = nextOrder()
-statusBox.RichText = false
-do
-	local p = Instance.new("UIPadding")
-	p.PaddingTop = UDim.new(0, 6)
-	p.PaddingBottom = UDim.new(0, 6)
-	p.PaddingLeft = UDim.new(0, 8)
-	p.PaddingRight = UDim.new(0, 8)
-	p.Parent = statusBox
-	local c = Instance.new("UICorner")
-	c.CornerRadius = UDim.new(0, 4)
-	c.Parent = statusBox
-end
-statusBox.Parent = scroll
-
-local function setStatus(text)
-	statusBox.Text = text
-	print("[falgen] " .. text)
-end
-local function appendStatus(text)
-	statusBox.Text = statusBox.Text .. "\n" .. text
-	print("[falgen] " .. text)
-end
-
--- Shared image state for Image → 3D (set by disk pick OR fal generate/edit).
-local activeImageUrl = nil   -- current image used for Image → 3D
-local baselineImageUrl = nil -- the original image (for Reset)
-
-local function showPreview(url)
-	local ok, err = pcall(function()
-		local ei = urlToEditableImage(url)
-		-- ImageContent is the EditableImage path; fall back to Image just in case.
-		local shown = pcall(function() previewImage.ImageContent = Content.fromObject(ei) end)
-		if not shown then shown = pcall(function() previewImage.Image = Content.fromObject(ei) end) end
-		if not shown then error("couldn't assign EditableImage to the ImageLabel (ImageContent/Image)") end
-	end)
-	if not ok then
-		appendStatus("(preview unavailable: " .. tostring(err) .. " — the image URL still works for 3D)")
-	end
-end
-
-local function setActiveImage(url, isBaseline)
-	activeImageUrl = url
-	if isBaseline then baselineImageUrl = url end
-	showPreview(url)
-end
-
-local lastGlbUrl = nil
-local urlBox = textBox("(GLB URL will appear here on completion — copy + use Studio's 3D Importer if auto-import fails)", 28, false)
+muted("Uses the current image from the Image tab:")
+local thumb3D = imagePreview(200)
+local genImageBtn = button("Generate 3D from current image")
+local urlBox = textBox("(GLB URL appears here — copy + use Studio's 3D Importer)", 28, false)
 urlBox.TextEditable = false
 urlBox.PlaceholderColor3 = Color3.fromRGB(120, 120, 120)
 
 -- ============================================================
--- Wire-up
+-- Material tab (PATINA)
+-- ============================================================
+activeBuildParent = tabFrames.Material
+header("Material (PATINA)")
+muted("Make a seamless tiling PBR material, then apply it to the selected part — from a description, or from the current image.")
+local matPromptBox = textBox("e.g. weathered cobblestone, seamless, top-down", 48, true)
+local genMatBtn = button("Generate material from text", COL_ACCENT)
+muted("…or use the current image (from the Image tab):")
+local matSrcThumb = imagePreview(200)
+local genMatFromImageBtn = button("Material from current image", COL_ACCENT)
+muted("Generated material:")
+local matPreview = imagePreview(160)
+local applyMatBtn = button("Apply to selected part", Color3.fromRGB(80, 80, 90))
+
+-- ============================================================
+-- Video tab (placeholder)
+-- ============================================================
+activeBuildParent = tabFrames.Video
+header("Video")
+muted("Generate video with fal and drop it onto an in-experience screen (VideoFrame). Coming soon.")
+
+refreshQualityButtons()
+showTab("Settings")
+
+-- ============================================================
+-- Shared image state + preview
+-- ============================================================
+local activeImageUrl, baselineImageUrl = nil, nil
+
+local function showPreview(target, url)
+	local ok, err = pcall(function()
+		local ei = urlToEditableImage(url)
+		local shown = pcall(function() target.ImageContent = Content.fromObject(ei) end)
+		if not shown then shown = pcall(function() target.Image = Content.fromObject(ei) end) end
+		if not shown then error("couldn't assign EditableImage to the ImageLabel") end
+	end)
+	if not ok then appendStatus("(preview unavailable: " .. tostring(err) .. ")") end
+end
+
+local currentImageDisplays = { previewImage, thumb3D, matSrcThumb }
+local function setActiveImage(url, isBaseline)
+	activeImageUrl = url
+	if isBaseline then baselineImageUrl = url end
+	pickedLabel.Text = "✓ current image set"
+	pickedLabel.TextColor3 = Color3.fromRGB(120, 220, 120)
+	local ok, err = pcall(function()
+		local ei = urlToEditableImage(url)
+		local c = Content.fromObject(ei)
+		for _, lbl in ipairs(currentImageDisplays) do
+			if not pcall(function() lbl.ImageContent = c end) then pcall(function() lbl.Image = c end) end
+		end
+	end)
+	if not ok then appendStatus("(preview unavailable: " .. tostring(err) .. ")") end
+end
+
+-- ============================================================
+-- fal image gen/edit — routed by qualityMode
+-- ============================================================
+local function imageUrlFromResult(result)
+	return result.images and result.images[1] and result.images[1].url
+end
+local function generateImageUrl(prompt)
+	if qualityMode == "quality" then
+		return imageUrlFromResult(falRunJob(IMAGE_GEN_MODEL_QUALITY, { prompt = prompt, aspect_ratio = "1:1", resolution = "1K", output_format = "png" }, appendStatus))
+	end
+	return imageUrlFromResult(falRunJob(IMAGE_GEN_MODEL_FAST, { prompt = prompt, image_size = "square_hd", output_format = "png" }, appendStatus))
+end
+local function editImageUrl(prompt, imageUrl)
+	if qualityMode == "quality" then
+		return imageUrlFromResult(falRunJob(IMAGE_EDIT_MODEL_QUALITY, { prompt = prompt, image_urls = { imageUrl }, output_format = "png" }, appendStatus))
+	end
+	return imageUrlFromResult(falRunJob(IMAGE_EDIT_MODEL_FAST, { prompt = prompt, image_url = imageUrl, output_format = "png" }, appendStatus))
+end
+
+-- ============================================================
+-- Busy state
+-- ============================================================
+local jobButtons = { genTextBtn, genImageBtn, genImgBtn, editImgBtn, genMatBtn, genMatFromImageBtn, applyMatBtn }
+local function setBusy(busy)
+	for _, b in ipairs(jobButtons) do
+		b.AutoButtonColor = not busy
+		b.Active = not busy
+		b.TextTransparency = busy and 0.4 or 0
+	end
+end
+
+local function requireKey()
+	if getKey() == "" then setStatus("Save your fal API key first (Settings tab)."); return false end
+	return true
+end
+
+-- ============================================================
+-- Wire-up: Settings
 -- ============================================================
 saveKeyBtn.MouseButton1Click:Connect(function()
 	local typed = keyBox.Text
 	if typed == "" or typed == KEY_MASK then
-		setStatus(getKey() ~= "" and "Key unchanged." or "Paste a key first.")
-		return
+		setStatus(getKey() ~= "" and "Key unchanged." or "Paste a key first."); return
 	end
-	setKey(typed)
-	keyBox.Text = KEY_MASK
-	setStatus("fal key saved.")
+	setKey(typed); keyBox.Text = KEY_MASK; setStatus("fal key saved.")
+end)
+fastBtn.MouseButton1Click:Connect(function() qualityMode = "fast"; refreshQualityButtons(); setStatus("Image quality: Fast (z-image turbo).") end)
+qualityBtn.MouseButton1Click:Connect(function() qualityMode = "quality"; refreshQualityButtons(); setStatus("Image quality: Quality (nano-banana 2).") end)
+
+-- ============================================================
+-- Wire-up: Image tab
+-- ============================================================
+genImgBtn.MouseButton1Click:Connect(function()
+	local p = imgGenPromptBox.Text
+	if p == "" or p == nil then setStatus("Enter an image prompt first."); return end
+	if not requireKey() then return end
+	task.spawn(function()
+		setBusy(true)
+		setStatus(string.format("Generating image (%s)…", qualityMode))
+		local ok, urlOrErr = pcall(generateImageUrl, p)
+		if ok and urlOrErr then
+			appendStatus("✓ Image generated — previewing…"); setActiveImage(urlOrErr, true)
+		else
+			appendStatus("Image gen failed: " .. tostring(urlOrErr))
+		end
+		setBusy(false)
+	end)
 end)
 
-local pickedImageUrl = nil
-local pickedFileName = nil
+editImgBtn.MouseButton1Click:Connect(function()
+	if not activeImageUrl then setStatus("Generate or load an image first."); return end
+	local p = imgEditPromptBox.Text
+	if p == "" or p == nil then setStatus("Enter an edit instruction first."); return end
+	if not requireKey() then return end
+	task.spawn(function()
+		setBusy(true)
+		setStatus(string.format("Editing image (%s)…", qualityMode))
+		local ok, urlOrErr = pcall(editImageUrl, p, activeImageUrl)
+		if ok and urlOrErr then
+			appendStatus("✓ Edited — previewing…"); setActiveImage(urlOrErr, false)
+		else
+			appendStatus("Edit failed: " .. tostring(urlOrErr))
+		end
+		setBusy(false)
+	end)
+end)
+
+resetImgBtn.MouseButton1Click:Connect(function()
+	if not baselineImageUrl then setStatus("Nothing to reset to."); return end
+	setActiveImage(baselineImageUrl, false); setStatus("Reset to the original image.")
+end)
 
 pickBtn.MouseButton1Click:Connect(function()
-	if getKey() == "" then
-		setStatus("Save your fal API key first (needed to upload the image).")
-		return
-	end
+	if not requireKey() then return end
 	local file = StudioService:PromptImportFile({ "png", "jpg", "jpeg", "webp" })
-	if not file then
-		setStatus("No file picked.")
-		return
-	end
-	local ok, bytes = pcall(function()
-		return file:GetBinaryContents()
-	end)
-	if not ok then
-		setStatus("Couldn't read file: " .. tostring(bytes))
-		return
-	end
-	local size = #bytes
-	if size > MAX_IMAGE_BYTES then
-		setStatus(string.format("Image is %.1f MB — please pick something under %d MB.", size / 1024 / 1024, MAX_IMAGE_BYTES / 1024 / 1024))
-		return
+	if not file then setStatus("No file picked."); return end
+	local ok, bytes = pcall(function() return file:GetBinaryContents() end)
+	if not ok then setStatus("Couldn't read file: " .. tostring(bytes)); return end
+	if #bytes > MAX_IMAGE_BYTES then
+		setStatus(string.format("Image is %.1f MB — pick something under %d MB.", #bytes / 1024 / 1024, MAX_IMAGE_BYTES / 1024 / 1024)); return
 	end
 	local lower = string.lower(file.Name)
 	local mime = "image/png"
-	if string.match(lower, "%.jpe?g$") then
-		mime = "image/jpeg"
-	elseif string.match(lower, "%.webp$") then
-		mime = "image/webp"
-	end
-
-	pickedFileName = file.Name
-	pickedImageUrl = nil
-	pickedLabel.Text = string.format("uploading %s (%.1f KB) to fal storage…", file.Name, size / 1024)
-	pickedLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
-
+	if string.match(lower, "%.jpe?g$") then mime = "image/jpeg" elseif string.match(lower, "%.webp$") then mime = "image/webp" end
+	pickedLabel.Text = string.format("uploading %s…", file.Name); pickedLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
 	task.spawn(function()
 		local upOk, urlOrErr = pcall(falStorageUpload, bytes, file.Name, mime)
 		if not upOk then
-			pickedLabel.Text = "upload failed: " .. tostring(urlOrErr)
-			pickedLabel.TextColor3 = Color3.fromRGB(220, 100, 100)
-			setStatus("Image upload failed. " .. tostring(urlOrErr))
-			return
+			pickedLabel.Text = "upload failed: " .. tostring(urlOrErr); pickedLabel.TextColor3 = Color3.fromRGB(220, 100, 100)
+			setStatus("Image upload failed. " .. tostring(urlOrErr)); return
 		end
-		pickedLabel.Text = string.format("✓ %s — uploaded", file.Name)
-		pickedLabel.TextColor3 = Color3.fromRGB(120, 220, 120)
-		setStatus("Image ready — see preview below.")
-		setActiveImage(urlOrErr, true)
+		setStatus("Image loaded — see preview."); setActiveImage(urlOrErr, true)
 	end)
 end)
 
-local function setBusy(busy)
-	genTextBtn.AutoButtonColor = not busy
-	genImageBtn.AutoButtonColor = not busy
-	genTextBtn.Active = not busy
-	genImageBtn.Active = not busy
-	genTextBtn.BackgroundColor3 = busy and Color3.fromRGB(50, 60, 100) or Color3.fromRGB(70, 100, 200)
-	genImageBtn.BackgroundColor3 = busy and Color3.fromRGB(50, 60, 100) or Color3.fromRGB(70, 100, 200)
-end
-
-local function runJob(model, payload, label)
-	setBusy(true)
-	setStatus(string.format("Submitting %s…", label))
+-- ============================================================
+-- Wire-up: 3D tab
+-- ============================================================
+local function runMeshJob(model, payload, label)
+	setBusy(true); setStatus(string.format("Submitting %s…", label))
 	local ok, result = pcall(falRunJob, model, payload, appendStatus)
-	if not ok then
-		appendStatus("Error: " .. tostring(result))
-		setBusy(false)
-		return
-	end
+	if not ok then appendStatus("Error: " .. tostring(result)); setBusy(false); return end
 	appendStatus("Job complete.")
 	local glbUrl = extractGlbUrl(result)
-	if not glbUrl then
-		appendStatus("No GLB URL in response: " .. HttpService:JSONEncode(result))
-		setBusy(false)
-		return
-	end
-	lastGlbUrl = glbUrl
+	if not glbUrl then appendStatus("No GLB URL: " .. HttpService:JSONEncode(result)); setBusy(false); return end
 	urlBox.Text = glbUrl
-	appendStatus("GLB ready! Copy the URL above, paste in your browser to download, then drag the .glb file onto Studio's viewport to import.")
+	appendStatus("GLB ready — copy the URL (3D tab) and drag the .glb onto the viewport via Studio's 3D Importer.")
 	setBusy(false)
 end
 
 genTextBtn.MouseButton1Click:Connect(function()
-	local prompt = promptBox.Text
-	if prompt == "" or prompt == nil then
-		setStatus("Enter a prompt first.")
-		return
-	end
-	if getKey() == "" then
-		setStatus("Save your fal API key first.")
-		return
-	end
-	task.spawn(runJob, TEXT_MODEL, {
-		prompt = prompt,
-		face_limit = DEFAULT_FACE_LIMIT,
-		texture = true,
-	}, "text-to-3D")
+	local p = promptBox.Text
+	if p == "" or p == nil then setStatus("Enter a prompt first."); return end
+	if not requireKey() then return end
+	task.spawn(runMeshJob, TEXT_MODEL, { prompt = p, face_limit = DEFAULT_FACE_LIMIT, texture = true }, "text-to-3D")
 end)
 
 genImageBtn.MouseButton1Click:Connect(function()
-	if not activeImageUrl then
-		setStatus("No image yet — pick one from disk or generate one first.")
-		return
-	end
-	if getKey() == "" then
-		setStatus("Save your fal API key first.")
-		return
-	end
-	task.spawn(runJob, IMAGE_MODEL, {
-		image_url = activeImageUrl,
-		face_limit = DEFAULT_FACE_LIMIT,
-		texture = true,
-	}, "image-to-3D")
+	if not activeImageUrl then setStatus("No current image — make one in the Image tab first."); return end
+	if not requireKey() then return end
+	task.spawn(runMeshJob, IMAGE_MODEL, { image_url = activeImageUrl, face_limit = DEFAULT_FACE_LIMIT, texture = true }, "image-to-3D")
 end)
 
--- Generate an image with fal (text → image), then preview it as the baseline.
-genImgBtn.MouseButton1Click:Connect(function()
-	local p = imgGenPromptBox.Text
-	if p == "" or p == nil then setStatus("Enter an image prompt first."); return end
-	if getKey() == "" then setStatus("Save your fal API key first."); return end
+-- ============================================================
+-- Wire-up: Material tab (PATINA)
+-- ============================================================
+local MaterialService = game:GetService("MaterialService")
+local Selection = game:GetService("Selection")
+local matMaps = nil
+local matVariantCount = 0
+
+local function buildMaterialFromResult(result)
+	local urls = {}
+	for _, img in ipairs(result.images or {}) do
+		if img.map_type then urls[img.map_type] = img.url end
+	end
+	if not urls.basecolor then error("no basecolor in response: " .. HttpService:JSONEncode(result)) end
+	appendStatus("Decoding maps…")
+	local m = {}
+	m.ColorMap = urlToEditableImage(urls.basecolor)
+	if urls.normal then m.NormalMap = urlToEditableImage(urls.normal) end
+	if urls.roughness then m.RoughnessMap = urlToEditableImage(urls.roughness) end
+	if urls.metalness then m.MetalnessMap = urlToEditableImage(urls.metalness) end
+	matMaps = m
+	if not pcall(function() matPreview.ImageContent = Content.fromObject(m.ColorMap) end) then
+		pcall(function() matPreview.Image = Content.fromObject(m.ColorMap) end)
+	end
+end
+
+local function runMaterialJob(model, payload, label)
+	setBusy(true); setStatus(label)
+	local ok, result = pcall(falRunJob, model, payload, appendStatus)
+	if not ok then appendStatus("Material gen failed: " .. tostring(result)); setBusy(false); return end
+	local okB, errB = pcall(buildMaterialFromResult, result)
+	if okB then appendStatus("✓ Material ready — select a part and Apply.") else appendStatus("Material failed: " .. tostring(errB)) end
+	setBusy(false)
+end
+
+genMatBtn.MouseButton1Click:Connect(function()
+	local p = matPromptBox.Text
+	if p == "" or p == nil then setStatus("Enter a material prompt first."); return end
+	if not requireKey() then return end
+	task.spawn(runMaterialJob, PATINA_MATERIAL_MODEL, { prompt = p, output_format = "png", maps = { "basecolor", "normal", "roughness", "metalness" } }, "Generating material from text (PATINA)…")
+end)
+
+genMatFromImageBtn.MouseButton1Click:Connect(function()
+	if not activeImageUrl then setStatus("No current image — make one in the Image tab first."); return end
+	if not requireKey() then return end
+	task.spawn(runMaterialJob, PATINA_FROM_IMAGE_MODEL, { image_url = activeImageUrl, output_format = "png", maps = { "basecolor", "normal", "roughness", "metalness" } }, "Making material from current image (PATINA)…")
+end)
+
+local function uploadImageAsset(ei, name)
+	local res, assetId = AssetService:CreateAssetAsync(ei, Enum.AssetType.Image, { Name = name })
+	if not assetId then error("'" .. name .. "' upload failed: " .. tostring(res)) end
+	return "rbxassetid://" .. tostring(assetId)
+end
+
+applyMatBtn.MouseButton1Click:Connect(function()
+	if not matMaps then setStatus("Generate a material first."); return end
+	local part = Selection:Get()[1]
+	if not (part and part:IsA("BasePart")) then setStatus("Select a Part in the viewport, then Apply."); return end
 	task.spawn(function()
-		setBusy(true)
-		setStatus("Generating image with fal…")
-		local ok, result = pcall(falRunJob, IMAGE_GEN_MODEL, {
-			prompt = p,
-			image_size = "square_hd",
-			output_format = "png",
-		}, appendStatus)
-		if ok then
-			local url = result.images and result.images[1] and result.images[1].url
-			if url then
-				appendStatus("✓ Image generated — previewing…")
-				setActiveImage(url, true)
-			else
-				appendStatus("No image URL in response: " .. HttpService:JSONEncode(result))
-			end
-		else
-			appendStatus("Image gen failed: " .. tostring(result))
+		setBusy(true); setStatus("Uploading maps to Roblox (MaterialVariant needs asset IDs)…")
+		local ok, errOrUris = pcall(function()
+			local uris = {}
+			appendStatus("  uploading basecolor…"); uris.color = uploadImageAsset(matMaps.ColorMap, "falPatina_basecolor")
+			if matMaps.NormalMap then appendStatus("  uploading normal…"); uris.normal = uploadImageAsset(matMaps.NormalMap, "falPatina_normal") end
+			if matMaps.RoughnessMap then appendStatus("  uploading roughness…"); uris.rough = uploadImageAsset(matMaps.RoughnessMap, "falPatina_roughness") end
+			if matMaps.MetalnessMap then appendStatus("  uploading metalness…"); uris.metal = uploadImageAsset(matMaps.MetalnessMap, "falPatina_metalness") end
+			return uris
+		end)
+		if not ok then
+			appendStatus("Upload failed: " .. tostring(errOrUris))
+			appendStatus("(Enable Studio Beta: 'CreateAssetAsync Lua API', then restart.)")
+			setBusy(false); return
 		end
+		local uris = errOrUris
+		matVariantCount += 1
+		local mv = Instance.new("MaterialVariant")
+		mv.Name = "falPatina_" .. matVariantCount
+		mv.BaseMaterial = Enum.Material.SmoothPlastic
+		mv.StudsPerTile = 4
+		mv.ColorMap = uris.color
+		if uris.normal then mv.NormalMap = uris.normal end
+		if uris.rough then mv.RoughnessMap = uris.rough end
+		if uris.metal then mv.MetalnessMap = uris.metal end
+		mv.Parent = MaterialService
+		part.Material = Enum.Material.SmoothPlastic
+		part.MaterialVariant = mv.Name
+		appendStatus("✓ Applied to " .. part.Name .. " as a reusable MaterialVariant.")
 		setBusy(false)
 	end)
 end)
 
--- Edit the current image (image → image). Edits compound on the current image.
-editImgBtn.MouseButton1Click:Connect(function()
-	if not activeImageUrl then setStatus("Generate or pick an image first."); return end
-	local p = imgEditPromptBox.Text
-	if p == "" or p == nil then setStatus("Enter an edit instruction first."); return end
-	if getKey() == "" then setStatus("Save your fal API key first."); return end
-	task.spawn(function()
-		setBusy(true)
-		setStatus("Editing image with fal…")
-		local ok, result = pcall(falRunJob, IMAGE_EDIT_MODEL, {
-			prompt = p,
-			image_url = activeImageUrl,
-			output_format = "png",
-		}, appendStatus)
-		if ok then
-			local url = result.images and result.images[1] and result.images[1].url
-			if url then
-				appendStatus("✓ Edited — previewing…")
-				setActiveImage(url, false) -- edits don't change the baseline
-			else
-				appendStatus("No image URL in response: " .. HttpService:JSONEncode(result))
-			end
-		else
-			appendStatus("Edit failed: " .. tostring(result))
-		end
-		setBusy(false)
-	end)
-end)
-
--- Reset to the original (pre-edit) image.
-resetImgBtn.MouseButton1Click:Connect(function()
-	if not baselineImageUrl then setStatus("Nothing to reset to."); return end
-	setActiveImage(baselineImageUrl, false)
-	setStatus("Reset to the original image.")
-end)
-
-print("[falgen] loaded. Click the 'falgen' button in the Plugins toolbar.")
+print("[falgen] loaded — tabs: Settings · Image · 3D · Material · Video.")
