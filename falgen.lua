@@ -1694,7 +1694,7 @@ end
 -- opening one collapses any other open dropdown. onSelect(value) fires on pick and on rebuild.
 -- returns a handle with .rebuild(newOptions) so the option list can change with the quality tier.
 local dropdownClosers = {}
-local function dropdown(labelText, options, onSelect)
+local function dropdown(labelText, options, onSelect, defaultValue)
 	local OPTION_H, ROW_BG = 26, Color3.fromRGB(26, 26, 26)
 	local current, open, rowCount = nil, false, 0
 
@@ -1758,11 +1758,17 @@ local function dropdown(labelText, options, onSelect)
 		list.Size = UDim2.new(1, 0, 0, rowCount * OPTION_H)
 		local keep = nil
 		for _, o in ipairs(opts) do if o == current then keep = o end end
-		setValue(keep or opts[1], true) -- clamp to a valid value, syncing external state
+		if not keep and current == nil and defaultValue then -- first populate: honor defaultValue if present
+			for _, o in ipairs(opts) do if o == defaultValue then keep = o end end
+		end
+		setValue(keep or opts[1], true) -- keep current if valid, else default/first; syncs external state
 	end
 
 	populate(options)
-	return { rebuild = function(opts) collapse(); populate(opts) end }
+	return {
+		rebuild = function(opts) collapse(); populate(opts) end,
+		setVisible = function(v) if not v then collapse() end; holder.Visible = v end,
+	}
 end
 local function imagePreview(height)
 	local img = Instance.new("ImageButton")
@@ -1887,9 +1893,14 @@ muted("Generated material:")
 local matPreview = imagePreview(160)
 divider()
 muted("Apply it. Terrain mode overrides a built-in material everywhere it's painted. Studs/tile sets the repeat scale - adjustable live after applying.", 48)
-dropdown("Apply to", { "Selected part", "Terrain" }, function(v) applyTarget = v end)
-dropdown("Terrain material", { "Grass", "LeafyGrass", "Ground", "Rock", "Sand", "Snow", "Mud", "Slate", "Basalt", "Sandstone", "Cobblestone", "Concrete" }, function(v) terrainBaseMat = v end)
-dropdown("Studs / tile", { "4", "6", "8", "12", "16", "24", "32", "64", "128", "2", "1" }, function(v) studsPerTile = tonumber(v) or 4; if lastMV then lastMV.StudsPerTile = studsPerTile end end)
+local matTerrainDD
+dropdown("Apply to", { "Selected part", "Terrain" }, function(v)
+	applyTarget = v
+	if matTerrainDD then matTerrainDD.setVisible(v == "Terrain") end
+end)
+matTerrainDD = dropdown("Terrain material", { "Grass", "LeafyGrass", "Ground", "Rock", "Sand", "Snow", "Mud", "Slate", "Basalt", "Sandstone", "Cobblestone", "Concrete" }, function(v) terrainBaseMat = v end)
+matTerrainDD.setVisible(applyTarget == "Terrain") -- only show when Apply to = Terrain
+dropdown("Studs / tile", { "1", "2", "4", "6", "8", "12", "16", "24", "32", "64", "128" }, function(v) studsPerTile = tonumber(v) or 24; if lastMV then lastMV.StudsPerTile = studsPerTile end end, "24")
 local applyMatBtn = button("Apply material", Color3.fromRGB(80, 80, 90))
 local resetTerrainBtn = button("Reset terrain overrides", Color3.fromRGB(70, 70, 80))
 
