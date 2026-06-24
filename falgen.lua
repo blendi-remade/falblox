@@ -1675,6 +1675,10 @@ local function textBox(placeholder, height, multi)
 	box.TextXAlignment = Enum.TextXAlignment.Left
 	box.TextYAlignment = multi and Enum.TextYAlignment.Top or Enum.TextYAlignment.Center
 	box.MultiLine = multi == true; box.TextWrapped = multi == true; box.LayoutOrder = nextOrder()
+	if multi then -- grow with content so long prompts stay fully visible (height acts as the minimum)
+		box.AutomaticSize = Enum.AutomaticSize.Y
+		local sc = Instance.new("UISizeConstraint"); sc.MinSize = Vector2.new(0, height or 48); sc.Parent = box
+	end
 	local p = Instance.new("UIPadding"); p.PaddingLeft = UDim.new(0,8); p.PaddingRight = UDim.new(0,8); p.PaddingTop = UDim.new(0,4); p.PaddingBottom = UDim.new(0,4); p.Parent = box
 	local stroke = Instance.new("UIStroke"); stroke.Color = Color3.fromRGB(60,60,60); stroke.Parent = box
 	local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(0,4); corner.Parent = box
@@ -1877,6 +1881,13 @@ local genImageBtn = button("Generate 3D from current image")
 local urlBox = textBox("(GLB URL appears here - copy + use Studio's 3D Importer)", 28, false)
 urlBox.TextEditable = false
 urlBox.PlaceholderColor3 = Color3.fromRGB(120, 120, 120)
+divider()
+header("Make equippable (Tool)")
+muted("Import a generated mesh, select it, then wrap it as a Tool (with a swing script). It scales to hand size and goes into StarterPack. Playtest (F5), press 1 to equip, left-click to swing. Use the rotate buttons (or a grip editor) to orient the grip.")
+local wrapToolBtn = button("Wrap selected mesh as Tool", COL_ACCENT)
+local gripPitchBtn = button("Rotate grip: pitch 90°", Color3.fromRGB(80, 80, 90))
+local gripYawBtn = button("Rotate grip: yaw 90°", Color3.fromRGB(80, 80, 90))
+local gripRollBtn = button("Rotate grip: roll 90°", Color3.fromRGB(80, 80, 90))
 
 -- ============================================================
 -- Material tab (PATINA)
@@ -1916,13 +1927,13 @@ local vidAspectDD = dropdown("Aspect", videoAspectOptions(), function(v) videoAs
 dropdown("Audio", { "On", "Off" }, function(v) videoAudio = (v == "On") end)
 divider()
 header("Text → video")
-local vidPromptBox = textBox("e.g. neon city skyline at night, slow flythrough", 48, true)
+local vidPromptBox = textBox("e.g. neon city skyline at night, slow flythrough", 64, true)
 local genVidTextBtn = button("Generate from text", COL_ACCENT)
 divider()
 header("Image → video")
 muted("Animates the current image (Image tab) - describe the motion:")
 local videoSrcThumb = imagePreview(200)
-local vidMotionBox = textBox("e.g. gentle camera push-in, flickering torchlight", 48, true)
+local vidMotionBox = textBox("e.g. gentle camera push-in, flickering torchlight", 80, true)
 local genVidImageBtn = button("Generate from current image", COL_ACCENT)
 divider()
 header("Add to scene")
@@ -2120,6 +2131,86 @@ genImageBtn.MouseButton1Click:Connect(function()
 	task.spawn(runMeshJob, IMAGE_MODEL, { image_url = activeImageUrl, face_limit = DEFAULT_FACE_LIMIT, texture = true }, "image-to-3D")
 end)
 
+-- ---- wrap a generated mesh as an equippable Tool ----
+local lastTool = nil
+-- source for the auto-inserted swing script: animates the Tool's Grip (self-contained, left-click to swing)
+local SWING_TOOL_SRC = [==[
+local SWING_ANGLE = math.rad(120)        -- swing size; flip sign to reverse direction
+local SWING_AXIS  = Vector3.new(1, 0, 0) -- (1,0,0) chop, (0,1,0) horizontal slash, (0,0,1) roll
+local OUT_TIME, BACK_TIME = 0.18, 0.28   -- seconds out / back
+local tool = script.Parent
+local swinging = false
+local baseGrip = tool.Grip
+tool.Equipped:Connect(function() baseGrip = tool.Grip end)
+local function move(from, to, dur)
+	local t = 0
+	while t < dur do t += task.wait(); tool.Grip = from:Lerp(to, math.min(t / dur, 1)) end
+	tool.Grip = to
+end
+tool.Activated:Connect(function()
+	if swinging then return end
+	swinging = true
+	local swung = baseGrip * CFrame.fromAxisAngle(SWING_AXIS, SWING_ANGLE)
+	move(baseGrip, swung, OUT_TIME)
+	move(swung, baseGrip, BACK_TIME)
+	swinging = false
+end)
+]==]
+local function largestBasePart(inst)
+	if inst:IsA("BasePart") then return inst end
+	local best, bestVol = nil, -1
+	for _, d in ipairs(inst:GetDescendants()) do
+		if d:IsA("BasePart") then
+			local v = d.Size.X * d.Size.Y * d.Size.Z
+			if v > bestVol then best, bestVol = d, v end
+		end
+	end
+	return best
+end
+
+wrapToolBtn.MouseButton1Click:Connect(function()
+	local sel = game:GetService("Selection"):Get()[1]
+	if not sel then setStatus("Select your imported mesh in the viewport first."); return end
+	local handle = largestBasePart(sel)
+	if not handle then setStatus("No mesh/part found in the selection."); return end
+	local CHS = game:GetService("ChangeHistoryService")
+	local rec = nil
+	pcall(function() rec = CHS:TryBeginRecording("falgen: wrap as Tool") end)
+	-- uniform scale so the longest axis is about 4.5 studs (hand-sized weapon)
+	local s = handle.Size
+	local longest = math.max(s.X, s.Y, s.Z)
+	if longest > 0 then handle.Size = s * (4.5 / longest) end
+	local tool = Instance.new("Tool")
+	tool.Name = (sel.Name ~= "" and sel.Name ~= "MeshPart") and sel.Name or "falTool"
+	tool.RequiresHandle = true
+	tool.CanBeDropped = true
+	tool.ToolTip = tool.Name
+	handle.Name = "Handle"
+	handle.Anchored = false
+	handle.CanCollide = false
+	handle.Parent = tool
+	if sel ~= handle and sel:IsA("Model") and #sel:GetChildren() == 0 then sel:Destroy() end
+	local swing = Instance.new("Script")
+	swing.Name = "Swing"
+	local wrote = pcall(function() swing.Source = SWING_TOOL_SRC end)
+	swing.Parent = tool
+	tool.Parent = game:GetService("StarterPack") -- lands in the Backpack; press 1 to equip (reliable)
+	lastTool = tool
+	pcall(function() game:GetService("Selection"):Set({ tool }) end)
+	if rec then pcall(function() CHS:FinishRecording(rec, Enum.FinishRecordingOperation.Commit) end) end
+	local swingNote = wrote and " left-click to swing." or " (couldn't write the swing script - paste it manually.)"
+	setStatus("✓ '" .. tool.Name .. "' is a Tool in StarterPack. Playtest (F5), press 1 to equip," .. swingNote)
+end)
+
+local function rotateGrip(rx, ry, rz)
+	if not lastTool or not lastTool.Parent then setStatus("Wrap a mesh as a Tool first."); return end
+	lastTool.Grip = lastTool.Grip * CFrame.Angles(math.rad(rx), math.rad(ry), math.rad(rz))
+	setStatus("Grip rotated. Playtest to see it in hand (grip only previews in play).")
+end
+gripPitchBtn.MouseButton1Click:Connect(function() rotateGrip(90, 0, 0) end)
+gripYawBtn.MouseButton1Click:Connect(function() rotateGrip(0, 90, 0) end)
+gripRollBtn.MouseButton1Click:Connect(function() rotateGrip(0, 0, 90) end)
+
 -- ============================================================
 -- Wire-up: Material tab (PATINA)
 -- ============================================================
@@ -2186,13 +2277,28 @@ local function uploadImageAsset(ei, name)
 	return "rbxassetid://" .. tostring(assetId)
 end
 
+-- collect every BasePart in the selection (parts directly, plus parts inside selected Models/folders)
+local function collectParts(selection)
+	local parts = {}
+	for _, inst in ipairs(selection) do
+		if inst:IsA("BasePart") then
+			parts[#parts + 1] = inst
+		else
+			for _, d in ipairs(inst:GetDescendants()) do
+				if d:IsA("BasePart") then parts[#parts + 1] = d end
+			end
+		end
+	end
+	return parts
+end
+
 applyMatBtn.MouseButton1Click:Connect(function()
 	if not matMaps then setStatus("Generate a material first."); return end
 	local toTerrain = (applyTarget == "Terrain")
-	local part = nil
+	local parts = nil
 	if not toTerrain then
-		part = Selection:Get()[1]
-		if not (part and part:IsA("BasePart")) then setStatus("Select a Part, or switch 'Apply to' → Terrain."); return end
+		parts = collectParts(Selection:Get())
+		if #parts == 0 then setStatus("Select one or more Parts, or switch 'Apply to' → Terrain."); return end
 	end
 	task.spawn(function()
 		setBusy(true); setStatus("Uploading maps to Roblox (MaterialVariant needs asset IDs)…")
@@ -2227,9 +2333,11 @@ applyMatBtn.MouseButton1Click:Connect(function()
 			terrainOverrides[baseMat] = true
 			appendStatus("✓ Terrain '" .. terrainBaseMat .. "' re-skinned (StudsPerTile " .. studsPerTile .. "). Tune Studs/tile live; if nothing changes, paint some terrain with " .. terrainBaseMat .. " first.")
 		else
-			part.Material = baseMat
-			part.MaterialVariant = mv.Name
-			appendStatus("✓ Applied to " .. part.Name .. " (StudsPerTile " .. studsPerTile .. "). Tune Studs/tile live.")
+			for _, pt in ipairs(parts) do
+				pt.Material = baseMat
+				pt.MaterialVariant = mv.Name
+			end
+			appendStatus("✓ Applied to " .. #parts .. " part(s) (StudsPerTile " .. studsPerTile .. "). Tune Studs/tile live.")
 		end
 		setBusy(false)
 	end)
