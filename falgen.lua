@@ -2,7 +2,7 @@
 -- Roblox Studio plugin: 3D generation in Studio via fal.ai (Tripo P1)
 --
 -- Drop into %LOCALAPPDATA%\Roblox\Plugins\ and restart Studio.
--- BYO fal key — paste it into the widget the first time you open it.
+-- BYO fal key - paste it into the widget the first time you open it.
 
 if not plugin then
 	warn("[falgen] not running as a plugin")
@@ -13,7 +13,7 @@ local HttpService = game:GetService("HttpService")
 local StudioService = game:GetService("StudioService")
 local AssetService = game:GetService("AssetService")
 
--- ===== vendored: sircfenner/png-luau v0.2.1 — single-file PNG decoder =====
+-- ===== vendored: sircfenner/png-luau v0.2.1 - single-file PNG decoder =====
 -- MIT License · Copyright (c) sircfenner · https://github.com/sircfenner/png-luau
 -- Inlined below as a self-contained module (decodes fal PNGs for in-Studio preview).
 local PNG = (function()
@@ -1283,7 +1283,7 @@ local POLL_INTERVAL = 2
 local MAX_IMAGE_BYTES = 4 * 1024 * 1024
 
 -- ============================================================
--- Storage (plugin:SetSetting — plaintext on disk, BYO key only)
+-- Storage (plugin:SetSetting - plaintext on disk, BYO key only)
 -- ============================================================
 local function getKey()
 	return plugin:GetSetting("fal_key") or ""
@@ -1298,7 +1298,7 @@ end
 local function authHeaders()
 	local key = getKey()
 	if key == "" then
-		error("FAL_KEY not set — paste it into the widget and click Save key.")
+		error("FAL_KEY not set - paste it into the widget and click Save key.")
 	end
 	return {
 		["Authorization"] = "Key " .. key,
@@ -1315,7 +1315,7 @@ local function falSubmit(model, payload)
 		Body = HttpService:JSONEncode(payload),
 	})
 	if not res.Success then
-		error(string.format("submit %d %s — %s", res.StatusCode, res.StatusMessage, res.Body))
+		error(string.format("submit %d %s - %s", res.StatusCode, res.StatusMessage, res.Body))
 	end
 	return HttpService:JSONDecode(res.Body)
 end
@@ -1369,7 +1369,7 @@ local function falRunJob(model, payload, onLog)
 end
 
 -- ============================================================
--- fal storage — initiate + PUT, returns a public file URL.
+-- fal storage - initiate + PUT, returns a public file URL.
 -- Mirrors what @fal-ai/client does in storage.ts.
 -- ============================================================
 local function redact(s)
@@ -1399,7 +1399,7 @@ local function falStorageUpload(bytes, fileName, mime)
 		}),
 	})
 	if not initRes.Success then
-		error(string.format("storage initiate %d %s — %s", initRes.StatusCode, initRes.StatusMessage, redact(initRes.Body)))
+		error(string.format("storage initiate %d %s - %s", initRes.StatusCode, initRes.StatusMessage, redact(initRes.Body)))
 	end
 	local init = HttpService:JSONDecode(initRes.Body)
 	local uploadUrl = init.upload_url
@@ -1408,7 +1408,7 @@ local function falStorageUpload(bytes, fileName, mime)
 		error("storage initiate missing upload_url/file_url: " .. redact(initRes.Body))
 	end
 
-	-- 2. PUT bytes to upload_url (signed URL — no auth header needed).
+	-- 2. PUT bytes to upload_url (signed URL - no auth header needed).
 	local putRes = HttpService:RequestAsync({
 		Url = uploadUrl,
 		Method = "PUT",
@@ -1457,7 +1457,7 @@ local function urlToEditableImage(url)
 	local size = Vector2.new(img.width, img.height)
 	local ei = AssetService:CreateEditableImage({ Size = size })
 	if not ei then
-		error(string.format("CreateEditableImage nil (%dx%d — over cap?)", img.width, img.height))
+		error(string.format("CreateEditableImage nil (%dx%d - over cap?)", img.width, img.height))
 	end
 	ei:WritePixelsBuffer(Vector2.zero, size, img.pixels)
 	table.insert(imageKeepAlive, ei)
@@ -1800,7 +1800,7 @@ wireMaskedKey(keyBox, getKey)
 local saveKeyBtn = button("Save fal key", Color3.fromRGB(60, 130, 90))
 divider()
 header("Quality")
-muted("Global tier for fal generation. Fast = z-image turbo (images) + LTX-2.3 (video) — quick & cheaper. Quality = nano-banana 2 (images) + Seedance 2.0 (video) — higher fidelity. Applies to image generate/edit and video. (3D & material models are fixed.)")
+muted("Global tier for fal generation. Fast = z-image turbo (images) + LTX-2.3 (video) - quick & cheaper. Quality = nano-banana 2 (images) + Seedance 2.0 (video) - higher fidelity. Applies to image generate/edit and video. (3D & material models are fixed.)")
 local qualityMode = "fast"
 local fastBtn = button("⚡ Fast")
 local qualityBtn = button("✦ Quality")
@@ -1844,12 +1844,12 @@ end
 -- ============================================================
 activeBuildParent = tabFrames.Image
 header("Image")
-muted("Generate or edit an image, or load one from disk. The current image feeds the 3D, Material, and Video tabs — match the aspect to your video to avoid distortion.")
-local imgGenPromptBox = textBox("Generate — e.g. a fire-breathing dragon, concept art", 48, true)
+muted("Generate or edit an image, or load one from disk. The current image feeds the 3D, Material, and Video tabs - match the aspect to your video to avoid distortion.")
+local imgGenPromptBox = textBox("Generate - e.g. a fire-breathing dragon, concept art", 48, true)
 local imgAspectDD = dropdown("Aspect", imageAspectOptions(), function(v) imageAspect = v end)
 local imgResDD = dropdown("Resolution", imageResOptions(), function(v) imageResolution = v end)
 local genImgBtn = button("Generate image", COL_ACCENT)
-local imgEditPromptBox = textBox("Edit — e.g. make it icy blue, add glowing eyes", 48, true)
+local imgEditPromptBox = textBox("Edit - e.g. make it icy blue, add glowing eyes", 48, true)
 local editImgBtn = button("Edit current image", COL_ACCENT)
 local resetImgBtn = button("Reset to original", Color3.fromRGB(80, 80, 90))
 local pickBtn = button("Load image from disk…", Color3.fromRGB(80, 80, 90))
@@ -1868,7 +1868,7 @@ header("Image → 3D")
 muted("Uses the current image from the Image tab:")
 local thumb3D = imagePreview(200)
 local genImageBtn = button("Generate 3D from current image")
-local urlBox = textBox("(GLB URL appears here — copy + use Studio's 3D Importer)", 28, false)
+local urlBox = textBox("(GLB URL appears here - copy + use Studio's 3D Importer)", 28, false)
 urlBox.TextEditable = false
 urlBox.PlaceholderColor3 = Color3.fromRGB(120, 120, 120)
 
@@ -1886,7 +1886,7 @@ local genMatFromImageBtn = button("Material from current image", COL_ACCENT)
 muted("Generated material:")
 local matPreview = imagePreview(160)
 divider()
-muted("Apply it. Terrain mode overrides a built-in material everywhere it's painted. Studs/tile sets the repeat scale — adjustable live after applying.", 48)
+muted("Apply it. Terrain mode overrides a built-in material everywhere it's painted. Studs/tile sets the repeat scale - adjustable live after applying.", 48)
 dropdown("Apply to", { "Selected part", "Terrain" }, function(v) applyTarget = v end)
 dropdown("Terrain material", { "Grass", "LeafyGrass", "Ground", "Rock", "Sand", "Snow", "Mud", "Slate", "Basalt", "Sandstone", "Cobblestone", "Concrete" }, function(v) terrainBaseMat = v end)
 dropdown("Studs / tile", { "4", "6", "8", "12", "16", "24", "32", "64", "128", "2", "1" }, function(v) studsPerTile = tonumber(v) or 4; if lastMV then lastMV.StudsPerTile = studsPerTile end end)
@@ -1909,7 +1909,7 @@ local vidPromptBox = textBox("e.g. neon city skyline at night, slow flythrough",
 local genVidTextBtn = button("Generate from text", COL_ACCENT)
 divider()
 header("Image → video")
-muted("Animates the current image (Image tab) — describe the motion:")
+muted("Animates the current image (Image tab) - describe the motion:")
 local videoSrcThumb = imagePreview(200)
 local vidMotionBox = textBox("e.g. gentle camera push-in, flickering torchlight", 48, true)
 local genVidImageBtn = button("Generate from current image", COL_ACCENT)
@@ -1958,7 +1958,7 @@ local function setActiveImage(url, isBaseline)
 end
 
 -- ============================================================
--- fal image gen/edit — routed by qualityMode
+-- fal image gen/edit - routed by qualityMode
 -- ============================================================
 local function imageUrlFromResult(result)
 	return result.images and result.images[1] and result.images[1].url
@@ -2027,7 +2027,7 @@ genImgBtn.MouseButton1Click:Connect(function()
 		setStatus(string.format("Generating image (%s)…", qualityMode))
 		local ok, urlOrErr = pcall(generateImageUrl, p)
 		if ok and urlOrErr then
-			appendStatus("✓ Image generated — previewing…"); setActiveImage(urlOrErr, true)
+			appendStatus("✓ Image generated - previewing…"); setActiveImage(urlOrErr, true)
 		else
 			appendStatus("Image gen failed: " .. tostring(urlOrErr))
 		end
@@ -2045,7 +2045,7 @@ editImgBtn.MouseButton1Click:Connect(function()
 		setStatus(string.format("Editing image (%s)…", qualityMode))
 		local ok, urlOrErr = pcall(editImageUrl, p, activeImageUrl)
 		if ok and urlOrErr then
-			appendStatus("✓ Edited — previewing…"); setActiveImage(urlOrErr, false)
+			appendStatus("✓ Edited - previewing…"); setActiveImage(urlOrErr, false)
 		else
 			appendStatus("Edit failed: " .. tostring(urlOrErr))
 		end
@@ -2065,7 +2065,7 @@ pickBtn.MouseButton1Click:Connect(function()
 	local ok, bytes = pcall(function() return file:GetBinaryContents() end)
 	if not ok then setStatus("Couldn't read file: " .. tostring(bytes)); return end
 	if #bytes > MAX_IMAGE_BYTES then
-		setStatus(string.format("Image is %.1f MB — pick something under %d MB.", #bytes / 1024 / 1024, MAX_IMAGE_BYTES / 1024 / 1024)); return
+		setStatus(string.format("Image is %.1f MB - pick something under %d MB.", #bytes / 1024 / 1024, MAX_IMAGE_BYTES / 1024 / 1024)); return
 	end
 	local lower = string.lower(file.Name)
 	local mime = "image/png"
@@ -2077,7 +2077,7 @@ pickBtn.MouseButton1Click:Connect(function()
 			pickedLabel.Text = "upload failed: " .. tostring(urlOrErr); pickedLabel.TextColor3 = Color3.fromRGB(220, 100, 100)
 			setStatus("Image upload failed. " .. tostring(urlOrErr)); return
 		end
-		setStatus("Image loaded — see preview."); setActiveImage(urlOrErr, true)
+		setStatus("Image loaded - see preview."); setActiveImage(urlOrErr, true)
 	end)
 end)
 
@@ -2092,7 +2092,7 @@ local function runMeshJob(model, payload, label)
 	local glbUrl = extractGlbUrl(result)
 	if not glbUrl then appendStatus("No GLB URL: " .. HttpService:JSONEncode(result)); setBusy(false); return end
 	urlBox.Text = glbUrl
-	appendStatus("GLB ready — copy the URL (3D tab) and drag the .glb onto the viewport via Studio's 3D Importer.")
+	appendStatus("GLB ready - copy the URL (3D tab) and drag the .glb onto the viewport via Studio's 3D Importer.")
 	setBusy(false)
 end
 
@@ -2104,7 +2104,7 @@ genTextBtn.MouseButton1Click:Connect(function()
 end)
 
 genImageBtn.MouseButton1Click:Connect(function()
-	if not activeImageUrl then setStatus("No current image — make one in the Image tab first."); return end
+	if not activeImageUrl then setStatus("No current image - make one in the Image tab first."); return end
 	if not requireKey() then return end
 	task.spawn(runMeshJob, IMAGE_MODEL, { image_url = activeImageUrl, face_limit = DEFAULT_FACE_LIMIT, texture = true }, "image-to-3D")
 end)
@@ -2139,7 +2139,7 @@ local function runMaterialJob(model, payload, label)
 	local ok, result = pcall(falRunJob, model, payload, appendStatus)
 	if not ok then appendStatus("Material gen failed: " .. tostring(result)); setBusy(false); return end
 	local okB, errB = pcall(buildMaterialFromResult, result)
-	if okB then appendStatus("✓ Material ready — select a part and Apply.") else appendStatus("Material failed: " .. tostring(errB)) end
+	if okB then appendStatus("✓ Material ready - select a part and Apply.") else appendStatus("Material failed: " .. tostring(errB)) end
 	setBusy(false)
 end
 
@@ -2151,7 +2151,7 @@ genMatBtn.MouseButton1Click:Connect(function()
 end)
 
 genMatFromImageBtn.MouseButton1Click:Connect(function()
-	if not activeImageUrl then setStatus("No current image — make one in the Image tab first."); return end
+	if not activeImageUrl then setStatus("No current image - make one in the Image tab first."); return end
 	if not requireKey() then return end
 	task.spawn(runMaterialJob, PATINA_FROM_IMAGE_MODEL, { image_url = activeImageUrl, output_format = "png", maps = { "basecolor", "normal", "roughness", "metalness" } }, "Making material from current image (PATINA)…")
 end)
@@ -2257,7 +2257,7 @@ local function runVideoJob(model, payload, label)
 	vidUrlBox.TextEditable = true -- allow select/copy of the link
 	vidUrlBox.Text = url
 	appendStatus("✓ Video ready. Open the link → download the .mp4 → File ▸ Import → paste the asset ID below.")
-	setStatus("Video ready — copy the .mp4 link from the Video tab.")
+	setStatus("Video ready - copy the .mp4 link from the Video tab.")
 	setBusy(false)
 end
 
@@ -2278,7 +2278,7 @@ genVidTextBtn.MouseButton1Click:Connect(function()
 end)
 
 genVidImageBtn.MouseButton1Click:Connect(function()
-	if not activeImageUrl then setStatus("No current image — make one in the Image tab first."); return end
+	if not activeImageUrl then setStatus("No current image - make one in the Image tab first."); return end
 	local p = vidMotionBox.Text
 	if p == "" or p == nil then setStatus("Describe the motion for image → video first."); return end
 	if not requireKey() then return end
@@ -2334,4 +2334,4 @@ addVidBtn.MouseButton1Click:Connect(function()
 	setStatus("✓ Video screen on " .. part.Name .. " (" .. face.Name .. " face). If blank: the upload may still be in moderation.")
 end)
 
-print("[falgen] loaded — tabs: Settings · Image · 3D · Material · Video.")
+print("[falgen] loaded - tabs: Settings · Image · 3D · Material · Video.")
