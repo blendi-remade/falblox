@@ -1801,9 +1801,9 @@ local saveKeyBtn = button("Save fal key", Color3.fromRGB(60, 130, 90))
 divider()
 header("Quality")
 muted("Global tier for fal generation. Fast = z-image turbo (images) + LTX-2.3 (video) - quick & cheaper. Quality = nano-banana 2 (images) + Seedance 2.0 (video) - higher fidelity. Applies to image generate/edit and video. (3D & material models are fixed.)")
-local qualityMode = "fast"
-local fastBtn = button("⚡ Fast")
+local qualityMode = "quality"
 local qualityBtn = button("✦ Quality")
+local fastBtn = button("⚡ Fast")
 local function refreshQualityButtons()
 	fastBtn.BackgroundColor3 = qualityMode == "fast" and COL_ON or COL_OFF
 	qualityBtn.BackgroundColor3 = qualityMode == "quality" and COL_ACCENT or COL_OFF
