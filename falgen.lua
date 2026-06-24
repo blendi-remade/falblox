@@ -1270,8 +1270,8 @@ local IMAGE_GEN_MODEL_FAST = "fal-ai/z-image/turbo"
 local IMAGE_GEN_MODEL_QUALITY = "fal-ai/nano-banana-2"
 local IMAGE_EDIT_MODEL_FAST = "fal-ai/z-image/turbo/image-to-image"
 local IMAGE_EDIT_MODEL_QUALITY = "fal-ai/nano-banana-2/edit"
-local PATINA_MATERIAL_MODEL = "fal-ai/patina/material" -- text → tiling PBR material (PNG)
-local PATINA_FROM_IMAGE_MODEL = "fal-ai/patina" -- image → PBR maps (PNG)
+local PATINA_MATERIAL_MODEL = "fal-ai/patina/material" -- text → seamless tiling PBR material (PNG)
+local PATINA_EXTRACT_MODEL = "fal-ai/patina/material/extract" -- image → seamless tileable material (flattens, de-occludes, tiles, upscales)
 -- Video: two tiers (Fast = LTX-2.3, Quality = Seedance 2.0). Output URL at result.video.url.
 -- Fast/LTX has no 720p (floor 1080p → Roblox downscales to its 720p cap); Quality/Seedance defaults to 720p.
 local VIDEO_T2V_FAST = "fal-ai/ltx-2.3/text-to-video/fast"
@@ -2153,7 +2153,20 @@ end)
 genMatFromImageBtn.MouseButton1Click:Connect(function()
 	if not activeImageUrl then setStatus("No current image - make one in the Image tab first."); return end
 	if not requireKey() then return end
-	task.spawn(runMaterialJob, PATINA_FROM_IMAGE_MODEL, { image_url = activeImageUrl, output_format = "png", maps = { "basecolor", "normal", "roughness", "metalness" } }, "Making material from current image (PATINA)…")
+	-- PATINA extract = make a seamlessly tileable material FROM an image. The prompt is a label
+	-- for the texture you want (e.g. "marble"); falls back to a generic one if blank.
+	local p = matPromptBox.Text
+	if p == nil or p == "" then p = "seamless tiling PBR material" end
+	task.spawn(runMaterialJob, PATINA_EXTRACT_MODEL, {
+		prompt = p,
+		image_url = activeImageUrl,
+		strength = 0.75,
+		num_inference_steps = 8,
+		enable_prompt_expansion = true,
+		image_size = { width = 1024, height = 1024 },
+		maps = { "basecolor", "normal", "roughness", "metalness" },
+		output_format = "png",
+	}, "Making material from current image (PATINA extract)…")
 end)
 
 local function uploadImageAsset(ei, name)
