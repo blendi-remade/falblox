@@ -2,7 +2,9 @@
 
 A Roblox Studio plugin for generating game-ready assets with [fal.ai](https://fal.ai), without leaving the editor. Generate and edit images, turn them into 3D models, create tiling PBR materials for parts and terrain, and produce video for in-experience screens. Every generation step offers a Fast tier (quick and cheaper) and a Quality tier (higher fidelity).
 
-<!-- images and demo clips to be added later -->
+![falblox demo](docs/demo.png)
+
+<!-- more screenshots and demo clips to be added later -->
 
 ## What it does
 
