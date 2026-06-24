@@ -1690,6 +1690,80 @@ local function button(text, color)
 	btn.Parent = activeBuildParent
 	return btn
 end
+-- inline dropdown: a header that expands a list of options downward (pushes items below).
+-- opening one collapses any other open dropdown. onSelect(value) fires on pick and on rebuild.
+-- returns a handle with .rebuild(newOptions) so the option list can change with the quality tier.
+local dropdownClosers = {}
+local function dropdown(labelText, options, onSelect)
+	local OPTION_H, ROW_BG = 26, Color3.fromRGB(26, 26, 26)
+	local current, open, rowCount = nil, false, 0
+
+	local holder = Instance.new("Frame")
+	holder.Size = UDim2.new(1, 0, 0, 32); holder.BackgroundTransparency = 1
+	holder.BorderSizePixel = 0; holder.ClipsDescendants = true
+	holder.LayoutOrder = nextOrder(); holder.Parent = activeBuildParent
+
+	local head = Instance.new("TextButton")
+	head.Size = UDim2.new(1, 0, 0, 32); head.BackgroundColor3 = COL_OFF; head.AutoButtonColor = true
+	head.TextColor3 = Color3.fromRGB(235, 235, 235); head.Font = Enum.Font.SourceSansSemibold
+	head.TextSize = 14; head.TextXAlignment = Enum.TextXAlignment.Left; head.Text = ""
+	do local p = Instance.new("UIPadding"); p.PaddingLeft = UDim.new(0,10); p.PaddingRight = UDim.new(0,26); p.Parent = head end
+	do local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0,4); c.Parent = head end
+	head.Parent = holder
+
+	local caret = Instance.new("TextLabel")
+	caret.AnchorPoint = Vector2.new(1, 0); caret.Position = UDim2.new(1, -10, 0, 0); caret.Size = UDim2.new(0, 14, 0, 32)
+	caret.BackgroundTransparency = 1; caret.TextColor3 = Color3.fromRGB(170, 170, 170)
+	caret.Font = Enum.Font.SourceSansBold; caret.TextSize = 14; caret.Text = "▾"; caret.ZIndex = 2; caret.Parent = holder
+
+	local list = Instance.new("Frame")
+	list.Position = UDim2.new(0, 0, 0, 35); list.Size = UDim2.new(1, 0, 0, 0)
+	list.BackgroundColor3 = ROW_BG; list.BorderSizePixel = 0; list.Visible = false
+	do local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0,4); c.Parent = list end
+	do local s = Instance.new("UIStroke"); s.Color = Color3.fromRGB(60,60,60); s.Parent = list end
+	do local l = Instance.new("UIListLayout"); l.SortOrder = Enum.SortOrder.LayoutOrder; l.Parent = list end
+	list.Parent = holder
+
+	local function highlight()
+		for _, r in ipairs(list:GetChildren()) do
+			if r:IsA("TextButton") then r.BackgroundColor3 = (r.Text == current) and COL_ON or ROW_BG end
+		end
+	end
+	local function collapse() open = false; list.Visible = false; holder.Size = UDim2.new(1, 0, 0, 32); caret.Text = "▾" end
+	dropdownClosers[#dropdownClosers + 1] = collapse
+	local function expand()
+		for _, c in ipairs(dropdownClosers) do c() end
+		open = true; list.Visible = true; caret.Text = "▴"
+		holder.Size = UDim2.new(1, 0, 0, 35 + rowCount * OPTION_H + 2)
+	end
+	head.MouseButton1Click:Connect(function() if open then collapse() else expand() end end)
+
+	local function setValue(v, fire)
+		current = v; head.Text = labelText .. ":   " .. tostring(current); highlight()
+		if fire and onSelect then onSelect(current) end
+	end
+	local function populate(opts)
+		for _, r in ipairs(list:GetChildren()) do if r:IsA("TextButton") then r:Destroy() end end
+		rowCount = #opts
+		for i, opt in ipairs(opts) do
+			local row = Instance.new("TextButton")
+			row.Size = UDim2.new(1, 0, 0, OPTION_H); row.AutoButtonColor = true; row.BorderSizePixel = 0
+			row.BackgroundColor3 = ROW_BG; row.TextColor3 = Color3.fromRGB(225, 225, 225)
+			row.Font = Enum.Font.SourceSans; row.TextSize = 14; row.TextXAlignment = Enum.TextXAlignment.Left
+			row.Text = opt; row.LayoutOrder = i
+			do local p = Instance.new("UIPadding"); p.PaddingLeft = UDim.new(0,12); p.Parent = row end
+			row.Parent = list
+			row.MouseButton1Click:Connect(function() collapse(); setValue(opt, true) end)
+		end
+		list.Size = UDim2.new(1, 0, 0, rowCount * OPTION_H)
+		local keep = nil
+		for _, o in ipairs(opts) do if o == current then keep = o end end
+		setValue(keep or opts[1], true) -- clamp to a valid value, syncing external state
+	end
+
+	populate(options)
+	return { rebuild = function(opts) collapse(); populate(opts) end }
+end
 local function imagePreview(height)
 	local img = Instance.new("ImageButton")
 	img.Size = UDim2.new(1, 0, 0, height or 180); img.BackgroundColor3 = Color3.fromRGB(24,24,24)
@@ -1735,13 +1809,44 @@ local function refreshQualityButtons()
 	qualityBtn.BackgroundColor3 = qualityMode == "quality" and COL_ACCENT or COL_OFF
 end
 
+-- ---- selector state + per-tier option lists (Fast = z-image/LTX-2.3, Quality = nano-banana/Seedance 2.0) ----
+local IMAGE_SIZE_MAP = { -- z-image (Fast) image_size presets; nano-banana (Quality) takes the aspect verbatim
+	["1:1"] = "square_hd", ["16:9"] = "landscape_16_9", ["9:16"] = "portrait_16_9",
+	["4:3"] = "landscape_4_3", ["3:4"] = "portrait_4_3",
+}
+local imageAspect, imageResolution = "1:1", "1K"
+local videoDuration, videoRes, videoAspect, videoAudio, videoFace = "6", "1080p", "16:9", true, "Auto"
+
+local function imageAspectOptions()
+	if qualityMode == "quality" then return { "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9", "auto" } end
+	return { "1:1", "16:9", "9:16", "4:3", "3:4" } -- must stay within IMAGE_SIZE_MAP keys for z-image
+end
+local function imageResOptions()
+	if qualityMode == "quality" then return { "1K", "2K", "4K", "0.5K" } end
+	return { "preset" } -- z-image has no resolution knob (the size preset is the resolution)
+end
+local function videoDurationOptions()
+	if qualityMode == "quality" then return { "5", "4", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "auto" } end
+	return { "6", "8", "10", "12", "14", "16", "18", "20" }
+end
+local function videoResOptions()
+	if qualityMode == "quality" then return { "720p", "480p", "1080p", "4k" } end
+	return { "1080p", "1440p", "2160p" } -- LTX has no 720p; Roblox downscales to its 720p cap on playback
+end
+local function videoAspectOptions()
+	if qualityMode == "quality" then return { "16:9", "9:16", "21:9", "4:3", "1:1", "3:4", "auto" } end
+	return { "16:9", "9:16" }
+end
+
 -- ============================================================
 -- Image tab (shared workspace → "current image")
 -- ============================================================
 activeBuildParent = tabFrames.Image
 header("Image")
-muted("Generate or edit an image, or load one from disk. The current image feeds both the 3D and Material tabs.")
+muted("Generate or edit an image, or load one from disk. The current image feeds the 3D, Material, and Video tabs — match the aspect to your video to avoid distortion.")
 local imgGenPromptBox = textBox("Generate — e.g. a fire-breathing dragon, concept art", 48, true)
+local imgAspectDD = dropdown("Aspect", imageAspectOptions(), function(v) imageAspect = v end)
+local imgResDD = dropdown("Resolution", imageResOptions(), function(v) imageResolution = v end)
 local genImgBtn = button("Generate image", COL_ACCENT)
 local imgEditPromptBox = textBox("Edit — e.g. make it icy blue, add glowing eyes", 48, true)
 local editImgBtn = button("Edit current image", COL_ACCENT)
@@ -1787,9 +1892,10 @@ local applyMatBtn = button("Apply to selected part", Color3.fromRGB(80, 80, 90))
 activeBuildParent = tabFrames.Video
 header("Video")
 muted("Generate a clip with fal, then play it on a part's surface as a screen. Fast = LTX-2.3, Quality = Seedance 2.0 (toggle in Settings).")
-local vidDurBtn = button("Duration: 6s", COL_OFF)
-local vidAspectBtn = button("Aspect: 16:9 (landscape)", COL_OFF)
-local vidAudioBtn = button("Audio: On", COL_OFF)
+local vidDurDD = dropdown("Duration (s)", videoDurationOptions(), function(v) videoDuration = v end)
+local vidResDD = dropdown("Resolution", videoResOptions(), function(v) videoRes = v end)
+local vidAspectDD = dropdown("Aspect", videoAspectOptions(), function(v) videoAspect = v end)
+dropdown("Audio", { "On", "Off" }, function(v) videoAudio = (v == "On") end)
 divider()
 header("Text → video")
 local vidPromptBox = textBox("e.g. neon city skyline at night, slow flythrough", 48, true)
@@ -1807,7 +1913,7 @@ local vidUrlBox = textBox("(.mp4 link appears here after generating)", 28, false
 vidUrlBox.TextEditable = false
 vidUrlBox.PlaceholderColor3 = Color3.fromRGB(120, 120, 120)
 local vidAssetBox = textBox("Paste video asset ID (rbxassetid:// or number)…", 28, false)
-local vidFaceBtn = button("Face: Auto (largest)", COL_OFF)
+dropdown("Face", { "Auto", "Front", "Back", "Top", "Bottom", "Right", "Left" }, function(v) videoFace = v end)
 local addVidBtn = button("Play on selected part", Color3.fromRGB(80, 80, 90))
 
 refreshQualityButtons()
@@ -1852,9 +1958,9 @@ local function imageUrlFromResult(result)
 end
 local function generateImageUrl(prompt)
 	if qualityMode == "quality" then
-		return imageUrlFromResult(falRunJob(IMAGE_GEN_MODEL_QUALITY, { prompt = prompt, aspect_ratio = "1:1", resolution = "1K", output_format = "png" }, appendStatus))
+		return imageUrlFromResult(falRunJob(IMAGE_GEN_MODEL_QUALITY, { prompt = prompt, aspect_ratio = imageAspect, resolution = imageResolution, output_format = "png" }, appendStatus))
 	end
-	return imageUrlFromResult(falRunJob(IMAGE_GEN_MODEL_FAST, { prompt = prompt, image_size = "square_hd", output_format = "png" }, appendStatus))
+	return imageUrlFromResult(falRunJob(IMAGE_GEN_MODEL_FAST, { prompt = prompt, image_size = IMAGE_SIZE_MAP[imageAspect] or "square_hd", output_format = "png" }, appendStatus))
 end
 local function editImageUrl(prompt, imageUrl)
 	if qualityMode == "quality" then
@@ -1883,6 +1989,15 @@ end
 -- ============================================================
 -- Wire-up: Settings
 -- ============================================================
+-- repopulate the tier-dependent dropdowns when Fast/Quality flips (clamps now-invalid values)
+local function refreshTierDropdowns()
+	imgAspectDD.rebuild(imageAspectOptions())
+	imgResDD.rebuild(imageResOptions())
+	vidDurDD.rebuild(videoDurationOptions())
+	vidResDD.rebuild(videoResOptions())
+	vidAspectDD.rebuild(videoAspectOptions())
+end
+
 saveKeyBtn.MouseButton1Click:Connect(function()
 	local typed = keyBox.Text
 	if typed == "" or typed == KEY_MASK then
@@ -1890,8 +2005,8 @@ saveKeyBtn.MouseButton1Click:Connect(function()
 	end
 	setKey(typed); keyBox.Text = KEY_MASK; setStatus("fal key saved.")
 end)
-fastBtn.MouseButton1Click:Connect(function() qualityMode = "fast"; refreshQualityButtons(); setStatus("Quality: Fast (z-image turbo · LTX-2.3 video).") end)
-qualityBtn.MouseButton1Click:Connect(function() qualityMode = "quality"; refreshQualityButtons(); setStatus("Quality: Quality (nano-banana 2 · Seedance 2.0 video).") end)
+fastBtn.MouseButton1Click:Connect(function() qualityMode = "fast"; refreshQualityButtons(); refreshTierDropdowns(); setStatus("Quality: Fast (z-image turbo · LTX-2.3 video).") end)
+qualityBtn.MouseButton1Click:Connect(function() qualityMode = "quality"; refreshQualityButtons(); refreshTierDropdowns(); setStatus("Quality: Quality (nano-banana 2 · Seedance 2.0 video).") end)
 
 -- ============================================================
 -- Wire-up: Image tab
@@ -2080,34 +2195,6 @@ end)
 -- Wire-up: Video tab
 -- ============================================================
 local ChangeHistoryService = game:GetService("ChangeHistoryService")
-local VIDEO_DURATIONS = { "6", "8", "10" }
-local vidDurIdx = 1
-local videoAspect = "16:9"
-local videoAudio = true
-
-vidDurBtn.MouseButton1Click:Connect(function()
-	vidDurIdx = vidDurIdx % #VIDEO_DURATIONS + 1
-	vidDurBtn.Text = "Duration: " .. VIDEO_DURATIONS[vidDurIdx] .. "s"
-end)
-vidAspectBtn.MouseButton1Click:Connect(function()
-	if videoAspect == "16:9" then
-		videoAspect = "9:16"; vidAspectBtn.Text = "Aspect: 9:16 (portrait)"
-	else
-		videoAspect = "16:9"; vidAspectBtn.Text = "Aspect: 16:9 (landscape)"
-	end
-end)
-vidAudioBtn.MouseButton1Click:Connect(function()
-	videoAudio = not videoAudio
-	vidAudioBtn.Text = "Audio: " .. (videoAudio and "On" or "Off")
-end)
-
-local VIDEO_FACES = { "Auto", "Front", "Back", "Top", "Bottom", "Right", "Left" }
-local vidFaceIdx = 1
-vidFaceBtn.MouseButton1Click:Connect(function()
-	vidFaceIdx = vidFaceIdx % #VIDEO_FACES + 1
-	local f = VIDEO_FACES[vidFaceIdx]
-	vidFaceBtn.Text = "Face: " .. f .. (f == "Auto" and " (largest)" or "")
-end)
 
 -- pick the part's biggest face so a flat panel gets the screen on its large surface
 local function largestFace(part)
@@ -2120,9 +2207,13 @@ local function largestFace(part)
 	return best
 end
 
--- Fast = LTX (floor 1080p, Roblox downscales to 720p); Quality = Seedance (native 720p).
-local function videoResolution()
-	return qualityMode == "quality" and "720p" or "1080p"
+-- LTX (Fast) requires 1080p when duration >10s (with fps=25, which is the default we send).
+local function effectiveVideoRes()
+	if qualityMode ~= "quality" then
+		local d = tonumber(videoDuration)
+		if d and d > 10 and videoRes ~= "1080p" then return "1080p" end
+	end
+	return videoRes
 end
 local function videoUrlFromResult(result)
 	return result and result.video and result.video.url
@@ -2146,14 +2237,15 @@ genVidTextBtn.MouseButton1Click:Connect(function()
 	if p == "" or p == nil then setStatus("Enter a video prompt first."); return end
 	if not requireKey() then return end
 	local model = qualityMode == "quality" and VIDEO_T2V_QUALITY or VIDEO_T2V_FAST
+	local res = effectiveVideoRes()
 	local payload = {
 		prompt = p,
-		duration = VIDEO_DURATIONS[vidDurIdx],
+		duration = videoDuration,
 		aspect_ratio = videoAspect,
-		resolution = videoResolution(),
+		resolution = res,
 		generate_audio = videoAudio,
 	}
-	task.spawn(runVideoJob, model, payload, string.format("Generating video (%s · %ss · %s)…", qualityMode, VIDEO_DURATIONS[vidDurIdx], videoResolution()))
+	task.spawn(runVideoJob, model, payload, string.format("Generating video (%s · %ss · %s · %s)…", qualityMode, videoDuration, res, videoAspect))
 end)
 
 genVidImageBtn.MouseButton1Click:Connect(function()
@@ -2162,15 +2254,16 @@ genVidImageBtn.MouseButton1Click:Connect(function()
 	if p == "" or p == nil then setStatus("Describe the motion for image → video first."); return end
 	if not requireKey() then return end
 	local model = qualityMode == "quality" and VIDEO_I2V_QUALITY or VIDEO_I2V_FAST
+	local res = effectiveVideoRes()
 	local payload = {
 		image_url = activeImageUrl,
 		prompt = p,
-		duration = VIDEO_DURATIONS[vidDurIdx],
+		duration = videoDuration,
 		aspect_ratio = videoAspect,
-		resolution = videoResolution(),
+		resolution = res,
 		generate_audio = videoAudio,
 	}
-	task.spawn(runVideoJob, model, payload, string.format("Generating video from image (%s · %ss)…", qualityMode, VIDEO_DURATIONS[vidDurIdx]))
+	task.spawn(runVideoJob, model, payload, string.format("Generating video from image (%s · %ss · %s)…", qualityMode, videoDuration, res))
 end)
 
 local function normalizeVideoAsset(s)
@@ -2185,8 +2278,7 @@ addVidBtn.MouseButton1Click:Connect(function()
 	if not asset then setStatus("Paste a valid video asset ID first (import the .mp4, then paste its id)."); return end
 	local part = Selection:Get()[1]
 	if not (part and part:IsA("BasePart")) then setStatus("Select a Part in the viewport, then Play."); return end
-	local faceChoice = VIDEO_FACES[vidFaceIdx]
-	local face = (faceChoice == "Auto") and largestFace(part) or Enum.NormalId[faceChoice]
+	local face = (videoFace == "Auto") and largestFace(part) or Enum.NormalId[videoFace]
 	local recording = nil
 	pcall(function() recording = ChangeHistoryService:TryBeginRecording("falgen: video on part") end)
 	local surfaceGui = Instance.new("SurfaceGui")
