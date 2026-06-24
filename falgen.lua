@@ -1816,6 +1816,7 @@ local IMAGE_SIZE_MAP = { -- z-image (Fast) image_size presets; nano-banana (Qual
 }
 local imageAspect, imageResolution = "1:1", "1K"
 local videoDuration, videoRes, videoAspect, videoAudio, videoFace = "6", "1080p", "16:9", true, "Auto"
+local applyTarget, terrainBaseMat, studsPerTile, lastMV = "Selected part", "Grass", 4, nil
 
 local function imageAspectOptions()
 	if qualityMode == "quality" then return { "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9", "auto" } end
@@ -1876,7 +1877,7 @@ urlBox.PlaceholderColor3 = Color3.fromRGB(120, 120, 120)
 -- ============================================================
 activeBuildParent = tabFrames.Material
 header("Material (PATINA)")
-muted("Make a seamless tiling PBR material, then apply it to the selected part — from a description, or from the current image.")
+muted("Make a seamless tiling PBR material from a description or the current image, then apply it to a selected part or paint it across terrain.")
 local matPromptBox = textBox("e.g. weathered cobblestone, seamless, top-down", 48, true)
 local genMatBtn = button("Generate material from text", COL_ACCENT)
 muted("…or use the current image (from the Image tab):")
@@ -1884,7 +1885,13 @@ local matSrcThumb = imagePreview(200)
 local genMatFromImageBtn = button("Material from current image", COL_ACCENT)
 muted("Generated material:")
 local matPreview = imagePreview(160)
-local applyMatBtn = button("Apply to selected part", Color3.fromRGB(80, 80, 90))
+divider()
+muted("Apply it. Terrain mode overrides a built-in material everywhere it's painted. Studs/tile sets the repeat scale — adjustable live after applying.", 48)
+dropdown("Apply to", { "Selected part", "Terrain" }, function(v) applyTarget = v end)
+dropdown("Terrain material", { "Grass", "LeafyGrass", "Ground", "Rock", "Sand", "Snow", "Mud", "Slate", "Basalt", "Sandstone", "Cobblestone", "Concrete" }, function(v) terrainBaseMat = v end)
+dropdown("Studs / tile", { "4", "6", "8", "12", "16", "24", "32", "64", "128", "2", "1" }, function(v) studsPerTile = tonumber(v) or 4; if lastMV then lastMV.StudsPerTile = studsPerTile end end)
+local applyMatBtn = button("Apply material", Color3.fromRGB(80, 80, 90))
+local resetTerrainBtn = button("Reset terrain overrides", Color3.fromRGB(70, 70, 80))
 
 -- ============================================================
 -- Video tab
@@ -2109,6 +2116,7 @@ local MaterialService = game:GetService("MaterialService")
 local Selection = game:GetService("Selection")
 local matMaps = nil
 local matVariantCount = 0
+local terrainOverrides = {} -- Enum.Material -> true, for Reset
 
 local function buildMaterialFromResult(result)
 	local urls = {}
@@ -2156,8 +2164,12 @@ end
 
 applyMatBtn.MouseButton1Click:Connect(function()
 	if not matMaps then setStatus("Generate a material first."); return end
-	local part = Selection:Get()[1]
-	if not (part and part:IsA("BasePart")) then setStatus("Select a Part in the viewport, then Apply."); return end
+	local toTerrain = (applyTarget == "Terrain")
+	local part = nil
+	if not toTerrain then
+		part = Selection:Get()[1]
+		if not (part and part:IsA("BasePart")) then setStatus("Select a Part, or switch 'Apply to' → Terrain."); return end
+	end
 	task.spawn(function()
 		setBusy(true); setStatus("Uploading maps to Roblox (MaterialVariant needs asset IDs)…")
 		local ok, errOrUris = pcall(function()
@@ -2174,21 +2186,38 @@ applyMatBtn.MouseButton1Click:Connect(function()
 			setBusy(false); return
 		end
 		local uris = errOrUris
+		local baseMat = toTerrain and (Enum.Material[terrainBaseMat] or Enum.Material.Grass) or Enum.Material.SmoothPlastic
 		matVariantCount += 1
 		local mv = Instance.new("MaterialVariant")
 		mv.Name = "falPatina_" .. matVariantCount
-		mv.BaseMaterial = Enum.Material.SmoothPlastic
-		mv.StudsPerTile = 4
+		mv.BaseMaterial = baseMat
+		mv.StudsPerTile = studsPerTile
 		mv.ColorMap = uris.color
 		if uris.normal then mv.NormalMap = uris.normal end
 		if uris.rough then mv.RoughnessMap = uris.rough end
 		if uris.metal then mv.MetalnessMap = uris.metal end
 		mv.Parent = MaterialService
-		part.Material = Enum.Material.SmoothPlastic
-		part.MaterialVariant = mv.Name
-		appendStatus("✓ Applied to " .. part.Name .. " as a reusable MaterialVariant.")
+		lastMV = mv
+		if toTerrain then
+			MaterialService:SetBaseMaterialOverride(baseMat, mv.Name)
+			terrainOverrides[baseMat] = true
+			appendStatus("✓ Terrain '" .. terrainBaseMat .. "' re-skinned (StudsPerTile " .. studsPerTile .. "). Tune Studs/tile live; if nothing changes, paint some terrain with " .. terrainBaseMat .. " first.")
+		else
+			part.Material = baseMat
+			part.MaterialVariant = mv.Name
+			appendStatus("✓ Applied to " .. part.Name .. " (StudsPerTile " .. studsPerTile .. "). Tune Studs/tile live.")
+		end
 		setBusy(false)
 	end)
+end)
+
+resetTerrainBtn.MouseButton1Click:Connect(function()
+	local n = 0
+	for mat in pairs(terrainOverrides) do
+		pcall(function() MaterialService:SetBaseMaterialOverride(mat, "") end)
+		terrainOverrides[mat] = nil; n += 1
+	end
+	setStatus(n > 0 and ("Cleared " .. n .. " terrain override(s).") or "No terrain overrides to clear.")
 end)
 
 -- ============================================================
