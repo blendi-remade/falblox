@@ -1272,6 +1272,12 @@ local IMAGE_EDIT_MODEL_FAST = "fal-ai/z-image/turbo/image-to-image"
 local IMAGE_EDIT_MODEL_QUALITY = "fal-ai/nano-banana-2/edit"
 local PATINA_MATERIAL_MODEL = "fal-ai/patina/material" -- text → tiling PBR material (PNG)
 local PATINA_FROM_IMAGE_MODEL = "fal-ai/patina" -- image → PBR maps (PNG)
+-- Video: two tiers (Fast = LTX-2.3, Quality = Seedance 2.0). Output URL at result.video.url.
+-- Fast/LTX has no 720p (floor 1080p → Roblox downscales to its 720p cap); Quality/Seedance defaults to 720p.
+local VIDEO_T2V_FAST = "fal-ai/ltx-2.3/text-to-video/fast"
+local VIDEO_I2V_FAST = "fal-ai/ltx-2.3/image-to-video/fast"
+local VIDEO_T2V_QUALITY = "bytedance/seedance-2.0/text-to-video"
+local VIDEO_I2V_QUALITY = "bytedance/seedance-2.0/image-to-video"
 local DEFAULT_FACE_LIMIT = 9000
 local POLL_INTERVAL = 2
 local MAX_IMAGE_BYTES = 4 * 1024 * 1024
@@ -1576,6 +1582,63 @@ end
 
 for i, n in ipairs(TAB_NAMES) do makeTab(n, i) end
 
+-- ---- maximize overlay (click any image preview to enlarge) ----
+local maximizeOverlay = Instance.new("Frame")
+maximizeOverlay.Size = UDim2.new(1, 0, 1, 0)
+maximizeOverlay.BackgroundColor3 = Color3.fromRGB(8, 8, 8)
+maximizeOverlay.BackgroundTransparency = 0.06
+maximizeOverlay.BorderSizePixel = 0
+maximizeOverlay.ZIndex = 50
+maximizeOverlay.Visible = false
+maximizeOverlay.Parent = widget
+
+-- full-area button behind the image → click anywhere to dismiss
+local maximizeBackdrop = Instance.new("TextButton")
+maximizeBackdrop.Size = UDim2.new(1, 0, 1, 0)
+maximizeBackdrop.BackgroundTransparency = 1
+maximizeBackdrop.Text = ""
+maximizeBackdrop.AutoButtonColor = false
+maximizeBackdrop.ZIndex = 50
+maximizeBackdrop.Parent = maximizeOverlay
+
+local modalImg = Instance.new("ImageLabel")
+modalImg.Size = UDim2.new(1, -24, 1, -56)
+modalImg.Position = UDim2.new(0, 12, 0, 44)
+modalImg.BackgroundTransparency = 1
+modalImg.ScaleType = Enum.ScaleType.Fit
+modalImg.ZIndex = 51
+modalImg.Parent = maximizeOverlay
+
+local closeMaxBtn = Instance.new("TextButton")
+closeMaxBtn.Size = UDim2.new(0, 90, 0, 28)
+closeMaxBtn.Position = UDim2.new(1, -100, 0, 8)
+closeMaxBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+closeMaxBtn.TextColor3 = Color3.fromRGB(240, 240, 240)
+closeMaxBtn.Font = Enum.Font.SourceSansSemibold
+closeMaxBtn.TextSize = 14
+closeMaxBtn.Text = "✕ Close"
+closeMaxBtn.ZIndex = 52
+do local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 4); c.Parent = closeMaxBtn end
+closeMaxBtn.Parent = maximizeOverlay
+
+local function closeMaximize() maximizeOverlay.Visible = false end
+maximizeBackdrop.MouseButton1Click:Connect(closeMaximize)
+closeMaxBtn.MouseButton1Click:Connect(closeMaximize)
+
+-- assign an image Content to a preview (ImageContent, falling back to Image) + remember it for enlarge
+local previewContent = {}
+local function assignImage(target, content)
+	if not pcall(function() target.ImageContent = content end) then pcall(function() target.Image = content end) end
+	previewContent[target] = content
+end
+
+local function openMaximize(srcBtn)
+	local content = previewContent[srcBtn]
+	if not content then return end -- nothing to show yet
+	if not pcall(function() modalImg.ImageContent = content end) then pcall(function() modalImg.Image = content end) end
+	maximizeOverlay.Visible = true
+end
+
 -- ---- build helpers (parent into whichever tab is being built) ----
 local order = 0
 local function nextOrder() order = order + 1; return order end
@@ -1628,10 +1691,19 @@ local function button(text, color)
 	return btn
 end
 local function imagePreview(height)
-	local img = Instance.new("ImageLabel")
+	local img = Instance.new("ImageButton")
 	img.Size = UDim2.new(1, 0, 0, height or 180); img.BackgroundColor3 = Color3.fromRGB(24,24,24)
-	img.BorderSizePixel = 0; img.ScaleType = Enum.ScaleType.Fit; img.LayoutOrder = nextOrder()
+	img.AutoButtonColor = false; img.BorderSizePixel = 0; img.ScaleType = Enum.ScaleType.Fit; img.LayoutOrder = nextOrder()
 	local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0,4); c.Parent = img
+	-- enlarge affordance (top-right)
+	local badge = Instance.new("TextLabel")
+	badge.Size = UDim2.new(0, 24, 0, 20); badge.Position = UDim2.new(1, -28, 0, 4)
+	badge.BackgroundColor3 = Color3.fromRGB(0,0,0); badge.BackgroundTransparency = 0.35
+	badge.TextColor3 = Color3.fromRGB(240,240,240); badge.Font = Enum.Font.SourceSansBold
+	badge.TextSize = 15; badge.Text = "⤢"
+	local bc = Instance.new("UICorner"); bc.CornerRadius = UDim.new(0,4); bc.Parent = badge
+	badge.Parent = img
+	img.MouseButton1Click:Connect(function() openMaximize(img) end)
 	img.Parent = activeBuildParent
 	return img
 end
@@ -1653,8 +1725,8 @@ local keyBox = textBox("Paste your fal API key…", 28, false)
 wireMaskedKey(keyBox, getKey)
 local saveKeyBtn = button("Save fal key", Color3.fromRGB(60, 130, 90))
 divider()
-header("Image quality")
-muted("Fast = z-image turbo (quick). Quality = nano-banana 2 (higher fidelity). Applies to every image generate/edit step.")
+header("Quality")
+muted("Global tier for fal generation. Fast = z-image turbo (images) + LTX-2.3 (video) — quick & cheaper. Quality = nano-banana 2 (images) + Seedance 2.0 (video) — higher fidelity. Applies to image generate/edit and video. (3D & material models are fixed.)")
 local qualityMode = "fast"
 local fastBtn = button("⚡ Fast")
 local qualityBtn = button("✦ Quality")
@@ -1710,11 +1782,33 @@ local matPreview = imagePreview(160)
 local applyMatBtn = button("Apply to selected part", Color3.fromRGB(80, 80, 90))
 
 -- ============================================================
--- Video tab (placeholder)
+-- Video tab
 -- ============================================================
 activeBuildParent = tabFrames.Video
 header("Video")
-muted("Generate video with fal and drop it onto an in-experience screen (VideoFrame). Coming soon.")
+muted("Generate a clip with fal, then play it on a part's surface as a screen. Fast = LTX-2.3, Quality = Seedance 2.0 (toggle in Settings).")
+local vidDurBtn = button("Duration: 6s", COL_OFF)
+local vidAspectBtn = button("Aspect: 16:9 (landscape)", COL_OFF)
+local vidAudioBtn = button("Audio: On", COL_OFF)
+divider()
+header("Text → video")
+local vidPromptBox = textBox("e.g. neon city skyline at night, slow flythrough", 48, true)
+local genVidTextBtn = button("Generate from text", COL_ACCENT)
+divider()
+header("Image → video")
+muted("Animates the current image (Image tab) — describe the motion:")
+local videoSrcThumb = imagePreview(200)
+local vidMotionBox = textBox("e.g. gentle camera push-in, flickering torchlight", 48, true)
+local genVidImageBtn = button("Generate from current image", COL_ACCENT)
+divider()
+header("Add to scene")
+muted("Roblox can't upload video from a plugin. Open the link, download the .mp4, import it via File ▸ Import (the Universal Importer beta), then paste the asset ID and select a part.")
+local vidUrlBox = textBox("(.mp4 link appears here after generating)", 28, false)
+vidUrlBox.TextEditable = false
+vidUrlBox.PlaceholderColor3 = Color3.fromRGB(120, 120, 120)
+local vidAssetBox = textBox("Paste video asset ID (rbxassetid:// or number)…", 28, false)
+local vidFaceBtn = button("Face: Auto (largest)", COL_OFF)
+local addVidBtn = button("Play on selected part", Color3.fromRGB(80, 80, 90))
 
 refreshQualityButtons()
 showTab("Settings")
@@ -1734,7 +1828,7 @@ local function showPreview(target, url)
 	if not ok then appendStatus("(preview unavailable: " .. tostring(err) .. ")") end
 end
 
-local currentImageDisplays = { previewImage, thumb3D, matSrcThumb }
+local currentImageDisplays = { previewImage, thumb3D, matSrcThumb, videoSrcThumb }
 local function setActiveImage(url, isBaseline)
 	activeImageUrl = url
 	if isBaseline then baselineImageUrl = url end
@@ -1744,7 +1838,7 @@ local function setActiveImage(url, isBaseline)
 		local ei = urlToEditableImage(url)
 		local c = Content.fromObject(ei)
 		for _, lbl in ipairs(currentImageDisplays) do
-			if not pcall(function() lbl.ImageContent = c end) then pcall(function() lbl.Image = c end) end
+			assignImage(lbl, c)
 		end
 	end)
 	if not ok then appendStatus("(preview unavailable: " .. tostring(err) .. ")") end
@@ -1772,7 +1866,7 @@ end
 -- ============================================================
 -- Busy state
 -- ============================================================
-local jobButtons = { genTextBtn, genImageBtn, genImgBtn, editImgBtn, genMatBtn, genMatFromImageBtn, applyMatBtn }
+local jobButtons = { genTextBtn, genImageBtn, genImgBtn, editImgBtn, genMatBtn, genMatFromImageBtn, applyMatBtn, genVidTextBtn, genVidImageBtn }
 local function setBusy(busy)
 	for _, b in ipairs(jobButtons) do
 		b.AutoButtonColor = not busy
@@ -1796,8 +1890,8 @@ saveKeyBtn.MouseButton1Click:Connect(function()
 	end
 	setKey(typed); keyBox.Text = KEY_MASK; setStatus("fal key saved.")
 end)
-fastBtn.MouseButton1Click:Connect(function() qualityMode = "fast"; refreshQualityButtons(); setStatus("Image quality: Fast (z-image turbo).") end)
-qualityBtn.MouseButton1Click:Connect(function() qualityMode = "quality"; refreshQualityButtons(); setStatus("Image quality: Quality (nano-banana 2).") end)
+fastBtn.MouseButton1Click:Connect(function() qualityMode = "fast"; refreshQualityButtons(); setStatus("Quality: Fast (z-image turbo · LTX-2.3 video).") end)
+qualityBtn.MouseButton1Click:Connect(function() qualityMode = "quality"; refreshQualityButtons(); setStatus("Quality: Quality (nano-banana 2 · Seedance 2.0 video).") end)
 
 -- ============================================================
 -- Wire-up: Image tab
@@ -1914,9 +2008,7 @@ local function buildMaterialFromResult(result)
 	if urls.roughness then m.RoughnessMap = urlToEditableImage(urls.roughness) end
 	if urls.metalness then m.MetalnessMap = urlToEditableImage(urls.metalness) end
 	matMaps = m
-	if not pcall(function() matPreview.ImageContent = Content.fromObject(m.ColorMap) end) then
-		pcall(function() matPreview.Image = Content.fromObject(m.ColorMap) end)
-	end
+	assignImage(matPreview, Content.fromObject(m.ColorMap))
 end
 
 local function runMaterialJob(model, payload, label)
@@ -1982,6 +2074,143 @@ applyMatBtn.MouseButton1Click:Connect(function()
 		appendStatus("✓ Applied to " .. part.Name .. " as a reusable MaterialVariant.")
 		setBusy(false)
 	end)
+end)
+
+-- ============================================================
+-- Wire-up: Video tab
+-- ============================================================
+local ChangeHistoryService = game:GetService("ChangeHistoryService")
+local VIDEO_DURATIONS = { "6", "8", "10" }
+local vidDurIdx = 1
+local videoAspect = "16:9"
+local videoAudio = true
+
+vidDurBtn.MouseButton1Click:Connect(function()
+	vidDurIdx = vidDurIdx % #VIDEO_DURATIONS + 1
+	vidDurBtn.Text = "Duration: " .. VIDEO_DURATIONS[vidDurIdx] .. "s"
+end)
+vidAspectBtn.MouseButton1Click:Connect(function()
+	if videoAspect == "16:9" then
+		videoAspect = "9:16"; vidAspectBtn.Text = "Aspect: 9:16 (portrait)"
+	else
+		videoAspect = "16:9"; vidAspectBtn.Text = "Aspect: 16:9 (landscape)"
+	end
+end)
+vidAudioBtn.MouseButton1Click:Connect(function()
+	videoAudio = not videoAudio
+	vidAudioBtn.Text = "Audio: " .. (videoAudio and "On" or "Off")
+end)
+
+local VIDEO_FACES = { "Auto", "Front", "Back", "Top", "Bottom", "Right", "Left" }
+local vidFaceIdx = 1
+vidFaceBtn.MouseButton1Click:Connect(function()
+	vidFaceIdx = vidFaceIdx % #VIDEO_FACES + 1
+	local f = VIDEO_FACES[vidFaceIdx]
+	vidFaceBtn.Text = "Face: " .. f .. (f == "Auto" and " (largest)" or "")
+end)
+
+-- pick the part's biggest face so a flat panel gets the screen on its large surface
+local function largestFace(part)
+	local s = part.Size
+	local opts = { { Enum.NormalId.Front, s.X * s.Y }, { Enum.NormalId.Top, s.X * s.Z }, { Enum.NormalId.Right, s.Z * s.Y } }
+	local best, bestArea = Enum.NormalId.Front, -1
+	for _, o in ipairs(opts) do
+		if o[2] > bestArea then best, bestArea = o[1], o[2] end
+	end
+	return best
+end
+
+-- Fast = LTX (floor 1080p, Roblox downscales to 720p); Quality = Seedance (native 720p).
+local function videoResolution()
+	return qualityMode == "quality" and "720p" or "1080p"
+end
+local function videoUrlFromResult(result)
+	return result and result.video and result.video.url
+end
+
+local function runVideoJob(model, payload, label)
+	setBusy(true); setStatus(label)
+	local ok, result = pcall(falRunJob, model, payload, appendStatus)
+	if not ok then appendStatus("Video gen failed: " .. tostring(result)); setBusy(false); return end
+	local url = videoUrlFromResult(result)
+	if not url then appendStatus("No video URL: " .. HttpService:JSONEncode(result)); setBusy(false); return end
+	vidUrlBox.TextEditable = true -- allow select/copy of the link
+	vidUrlBox.Text = url
+	appendStatus("✓ Video ready. Open the link → download the .mp4 → File ▸ Import → paste the asset ID below.")
+	setStatus("Video ready — copy the .mp4 link from the Video tab.")
+	setBusy(false)
+end
+
+genVidTextBtn.MouseButton1Click:Connect(function()
+	local p = vidPromptBox.Text
+	if p == "" or p == nil then setStatus("Enter a video prompt first."); return end
+	if not requireKey() then return end
+	local model = qualityMode == "quality" and VIDEO_T2V_QUALITY or VIDEO_T2V_FAST
+	local payload = {
+		prompt = p,
+		duration = VIDEO_DURATIONS[vidDurIdx],
+		aspect_ratio = videoAspect,
+		resolution = videoResolution(),
+		generate_audio = videoAudio,
+	}
+	task.spawn(runVideoJob, model, payload, string.format("Generating video (%s · %ss · %s)…", qualityMode, VIDEO_DURATIONS[vidDurIdx], videoResolution()))
+end)
+
+genVidImageBtn.MouseButton1Click:Connect(function()
+	if not activeImageUrl then setStatus("No current image — make one in the Image tab first."); return end
+	local p = vidMotionBox.Text
+	if p == "" or p == nil then setStatus("Describe the motion for image → video first."); return end
+	if not requireKey() then return end
+	local model = qualityMode == "quality" and VIDEO_I2V_QUALITY or VIDEO_I2V_FAST
+	local payload = {
+		image_url = activeImageUrl,
+		prompt = p,
+		duration = VIDEO_DURATIONS[vidDurIdx],
+		aspect_ratio = videoAspect,
+		resolution = videoResolution(),
+		generate_audio = videoAudio,
+	}
+	task.spawn(runVideoJob, model, payload, string.format("Generating video from image (%s · %ss)…", qualityMode, VIDEO_DURATIONS[vidDurIdx]))
+end)
+
+local function normalizeVideoAsset(s)
+	if not s then return nil end
+	local digits = string.match(s, "%d+")
+	if not digits then return nil end
+	return "rbxassetid://" .. digits
+end
+
+addVidBtn.MouseButton1Click:Connect(function()
+	local asset = normalizeVideoAsset(vidAssetBox.Text)
+	if not asset then setStatus("Paste a valid video asset ID first (import the .mp4, then paste its id)."); return end
+	local part = Selection:Get()[1]
+	if not (part and part:IsA("BasePart")) then setStatus("Select a Part in the viewport, then Play."); return end
+	local faceChoice = VIDEO_FACES[vidFaceIdx]
+	local face = (faceChoice == "Auto") and largestFace(part) or Enum.NormalId[faceChoice]
+	local recording = nil
+	pcall(function() recording = ChangeHistoryService:TryBeginRecording("falgen: video on part") end)
+	local surfaceGui = Instance.new("SurfaceGui")
+	surfaceGui.Name = "falVideoScreen"
+	surfaceGui.Face = face
+	surfaceGui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	surfaceGui.PixelsPerStud = 50
+	surfaceGui.LightInfluence = 0 -- fullbright so the video isn't darkened by lighting
+	surfaceGui.Adornee = part
+	surfaceGui.Parent = part
+	local vf = Instance.new("VideoFrame")
+	vf.Name = "Video"
+	vf.Size = UDim2.new(1, 0, 1, 0)
+	vf.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	vf.Looped = true
+	vf.Volume = videoAudio and 5 or 0
+	vf.Parent = surfaceGui
+	vf.Video = asset -- set AFTER parenting (staff-confirmed ordering, else it can stick unplayed)
+	vf:Play()
+	pcall(function() vf:SetStudioPreview(true) end) -- show it at edit time, no Play needed
+	if recording then
+		pcall(function() ChangeHistoryService:FinishRecording(recording, Enum.FinishRecordingOperation.Commit) end)
+	end
+	setStatus("✓ Video screen on " .. part.Name .. " (" .. face.Name .. " face). If blank: the upload may still be in moderation.")
 end)
 
 print("[falgen] loaded — tabs: Settings · Image · 3D · Material · Video.")
