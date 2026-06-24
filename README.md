@@ -12,7 +12,7 @@ The plugin is organized into tabs:
 
 - **Settings**: store your fal API key and pick the global quality tier (Fast or Quality), which applies to every image and video generation.
 - **Image**: generate an image from a prompt, edit it with further prompts, or load one from disk. Choose an aspect ratio, plus a resolution on the Quality tier. The current image is shared across the 3D, Material, and Video tabs, so one art-directed image can drive everything. Click any preview to enlarge it.
-- **3D**: generate a mesh from a text prompt or from the current image. The plugin returns a GLB that you import through Studio's native 3D Importer.
+- **3D**: generate a mesh from a text prompt or from the current image. The plugin returns a GLB that you import through Studio's native 3D Importer, then optionally wrap an imported mesh into an equippable **Tool** (scaled to hand size, with a left-click swing script).
 - **Material (PATINA)**: turn a prompt or the current image into a seamless tiling PBR material (base color, normal, roughness, metalness). Apply it to a selected part, or override a built-in material to re-skin entire terrain. Tiling scale is tunable live after applying.
 - **Video**: generate a clip from a prompt or the current image, then play it on a part's surface as an in-experience screen.
 
@@ -62,12 +62,14 @@ The result becomes the current image and appears on the 3D, Material, and Video 
 
 The plugin requests `face_limit: 9000` so meshes fit Roblox's 10,000 triangle MeshPart cap.
 
+**Make it equippable (optional):** select the imported mesh and click **Wrap selected mesh as Tool**. It scales to hand size, adds a swing script (left-click while equipped), and goes into StarterPack, so you press 1 in playtest to equip. Use the grip rotate buttons (or a dedicated grip editor) to fine-tune how it sits in the hand.
+
 ### Material (PATINA)
 
 1. **Generate material from text**, or **Material from current image**.
 2. Choose **Apply to**:
-   - **Selected part**: select a BasePart and apply. Best on a single flat surface, where a floor or plaza slab tiles cleanly.
-   - **Terrain**: pick the built-in material to override (Grass, Rock, Sand, and so on). This re-skins all geometry painted with that material, which turns a whole-terrain re-skin into a single click.
+   - **Selected part**: select one or more parts (or a Model, which applies to all parts inside it) and apply to them all at once. Best on flat surfaces, where a floor or plaza slab tiles cleanly.
+   - **Terrain**: pick the built-in material to override (Grass, Rock, Sand, and so on). This re-skins all geometry using that material (terrain and any parts set to it), which turns a whole-terrain or same-material re-skin into a single click.
 3. Tune **Studs / tile** at any time. It updates the applied material live, with no re-generation.
 4. **Reset terrain overrides** reverts terrain to its original materials.
 
